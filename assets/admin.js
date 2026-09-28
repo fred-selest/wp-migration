@@ -192,7 +192,7 @@
 		html += '<h3>Base de données</h3><p><strong>' + esc( r.db.count ) + '</strong> tables — ~' + esc( r.db.rows ) + ' lignes — ' + esc( r.db.size ) + '</p>';
 		html += '<details><summary>Détail des tables</summary><table class="widefat striped"><thead><tr><th>Table</th><th>Lignes</th><th>Taille</th></tr></thead><tbody>';
 		r.db.tables.forEach( function ( t ) {
-			html += '<tr><td><code>' + esc( t.name ) + '</code>' + ( t.warn ? '<br><span class="wpmig-warning-text">' + esc( t.warn ) + '</span>' : '' ) + '</td><td>' + esc( t.rows ) + '</td><td>' + esc( t.size ) + '</td></tr>';
+			html += '<tr><td><code>' + esc( t.name ) + '</code>' + ( t.warn ? '<br><span class="wpmig-warning-text">' + esc( t.warn ) + '</span>' : '' ) + ( t.empty ? '<br><span class="description">Données exclues : table recréée vide</span>' : '' ) + '</td><td>' + ( t.empty ? '—' : esc( t.rows ) ) + '</td><td>' + ( t.empty ? '—' : esc( t.size ) ) + '</td></tr>';
 		} );
 		html += '</tbody></table></details>';
 

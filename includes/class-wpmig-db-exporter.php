@@ -73,6 +73,35 @@ class WPMIG_DB_Exporter {
 	}
 
 	/**
+	 * Is this a log / cache table, whose data can be left out safely?
+	 * Never true for WordPress or WooCommerce data tables.
+	 *
+	 * @param string $name Table name.
+	 * @return bool
+	 */
+	public static function is_log_table( $name ) {
+		global $wpdb;
+		$suffix = strtolower( 0 === strpos( $name, $wpdb->prefix ) ? substr( $name, strlen( $wpdb->prefix ) ) : $name );
+		$known  = array(
+			'actionscheduler_logs', 'wfhits', 'wflogins', 'wfblockediplog', 'wfcrawlers', 'wffilechanges', 'wfknownfilelist', 'wfstatus',
+			'redirection_404', 'redirection_logs', 'wsal_occurrences', 'wsal_metadata', 'simple_history', 'simple_history_contexts',
+			'itsec_logs', 'itsec_temp', 'wpml_mails', 'umbrella_log', 'umbrella_backup', 'umbrella_task_backup', 'woocommerce_sessions',
+			'woof_query_cache', 'wpmailsmtp_debug_events', 'mail_log', 'email_log', 'cerber_log', 'cerber_traffic', 'aiowps_audit_log',
+			'aiowps_events', 'aiowps_failed_logins', 'aiowps_login_activity', 'statistics_visit', 'statistics_visitor', 'statistics_pages',
+			'statistics_useronline', 'statistics_exclusions', 'statistics_search', 'burst_statistics', 'burst_sessions', 'litespeed_url',
+			'litespeed_url_file', 'yoast_seo_links_log',
+		);
+		// Consent / privacy registers may have to be kept (GDPR): never suggested.
+		if ( preg_match( '/gdpr|consent|privacy|cookie/', $suffix ) ) {
+			return false;
+		}
+		if ( in_array( $suffix, $known, true ) ) {
+			return true;
+		}
+		return (bool) preg_match( '/(^|_)(logs?|logging|debug_events|audit_log|hits|traffic|404s?|sessions|cache)$/', $suffix );
+	}
+
+	/**
 	 * Pre-build database analysis.
 	 *
 	 * @param WPMIG_Package $package Package.
@@ -84,18 +113,20 @@ class WPMIG_DB_Exporter {
 		$rows    = 0;
 		$size    = 0;
 		foreach ( self::site_tables() as $name => $t ) {
-			if ( isset( $exclude[ $name ] ) ) {
-				$package->log( 'Table exclue : ' . $name );
+			$t['warn']           = '';
+			$t['structure_only'] = isset( $exclude[ $name ] );
+			if ( $t['structure_only'] ) {
+				// The table is recreated empty on the destination: plugins keep working.
+				$package->log( 'Données exclues (structure conservée) : ' . $name );
+				$tables[] = $t;
 				continue;
 			}
-			$warn = '';
-			if ( $t['size'] > 104857600 ) {
-				$warn = 'Table volumineuse (journaux ? statistiques ?) : envisagez de l\'exclure.';
+			if ( $t['size'] > 5242880 && self::is_log_table( $name ) ) {
+				$t['warn'] = 'Journal ou cache : ses données peuvent être exclues (la table sera recréée vide).';
 			}
-			$t['warn'] = $warn;
-			$tables[]  = $t;
-			$rows     += $t['rows'];
-			$size     += $t['size'];
+			$tables[] = $t;
+			$rows    += $t['rows'];
+			$size    += $t['size'];
 		}
 		foreach ( (array) $wpdb->get_results( 'SHOW FULL TABLES', ARRAY_N ) as $row ) {
 			if ( isset( $row[1] ) && 'VIEW' === strtoupper( $row[1] ) && 0 === strpos( $row[0], $wpdb->prefix ) ) {
@@ -128,12 +159,17 @@ class WPMIG_DB_Exporter {
 		$wpdb->query( 'SET SESSION sql_quote_show_create = 1' );
 
 		if ( empty( $state ) ) {
-			$tables = array();
+			$tables  = array();
+			$no_data = array();
 			foreach ( $data['report']['db']['tables'] as $t ) {
 				$tables[] = $t['name'];
+				if ( ! empty( $t['structure_only'] ) ) {
+					$no_data[] = $t['name'];
+				}
 			}
 			$state = array(
 				'tables'  => $tables,
+				'no_data' => $no_data,
 				'index'   => 0,
 				'offset'  => 0,
 				'table'   => null,
@@ -171,7 +207,7 @@ class WPMIG_DB_Exporter {
 			if ( null === $state['table'] ) {
 				$state['table'] = $this->start_table( $fh, $name );
 			}
-			$finished = $this->export_rows( $fh, $state['table'] );
+			$finished = ( isset( $state['no_data'] ) && in_array( $name, $state['no_data'], true ) ) || $this->export_rows( $fh, $state['table'] );
 			fflush( $fh );
 			$state['offset'] = ftell( $fh );
 			if ( $finished ) {

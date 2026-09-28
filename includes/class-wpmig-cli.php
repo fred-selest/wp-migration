@@ -32,7 +32,7 @@ class WPMIG_CLI {
 	 * : Comma separated file extensions to exclude.
 	 *
 	 * [--exclude-tables=<tables>]
-	 * : Comma separated tables to exclude.
+	 * : Comma separated tables whose data is left out (logs, caches): they are recreated empty.
 	 *
 	 * [--exclude-uploads]
 	 * : Do not include the media library.

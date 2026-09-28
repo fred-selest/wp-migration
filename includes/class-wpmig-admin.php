@@ -404,13 +404,13 @@ class WPMIG_Admin {
 							<label><input type="checkbox" name="skip_transients" value="1" checked> Ignorer les données temporaires (transients)</label><br>
 							<label><input type="checkbox" name="skip_spam" value="1" checked> Ignorer les commentaires indésirables et la corbeille</label><br>
 							<label><input type="checkbox" name="skip_revisions" value="1"> Ignorer les révisions des articles</label>
-							<details class="wpmig-tables"><summary>Exclure des tables (<?php echo count( $tables ); ?> tables)</summary>
+							<details class="wpmig-tables"><summary>Exclure les données de certaines tables (<?php echo count( $tables ); ?> tables)</summary>
+								<p class="description">Une table cochée est recréée <strong>vide</strong> sur la destination (sa structure est conservée, les extensions continuent de fonctionner). Réservé aux journaux et caches, signalés ci-dessous : n'excluez jamais les données des contenus, réglages, comptes ou commandes (<code>posts</code>, <code>postmeta</code>, <code>options</code>, <code>users</code>, tables WooCommerce…).</p>
 								<div class="wpmig-table-list">
 								<?php foreach ( $tables as $t ) : ?>
-									<label><input type="checkbox" name="exclude_tables[]" value="<?php echo esc_attr( $t['name'] ); ?>"> <code><?php echo esc_html( $t['name'] ); ?></code> <span class="description"><?php echo esc_html( size_format( $t['size'], 1 ) . ' — ' . number_format_i18n( $t['rows'] ) . ' lignes' ); ?></span></label>
+									<label><input type="checkbox" name="exclude_tables[]" value="<?php echo esc_attr( $t['name'] ); ?>"> <code><?php echo esc_html( $t['name'] ); ?></code> <span class="description"><?php echo esc_html( size_format( $t['size'], 1 ) . ' — ' . number_format_i18n( $t['rows'] ) . ' lignes' ); ?></span><?php if ( WPMIG_DB_Exporter::is_log_table( $t['name'] ) ) : ?> <span class="wpmig-log-table">journal / cache</span><?php endif; ?></label>
 								<?php endforeach; ?>
 								</div>
-								<p class="description">Attention : n'excluez jamais une table indispensable (options, users, posts…).</p>
 							</details>
 						</td>
 					</tr>

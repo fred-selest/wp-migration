@@ -8,6 +8,14 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le pr
 ### Ajouté
 - Nettoyage automatique des anciens packages, après chaque construction et une fois par jour (WP-Cron) : conservation des 5 derniers et suppression au-delà de 30 jours (réglable), suppression des constructions abandonnées ou en échec après 24 h (leur export SQL compris) et des fichiers orphelins ; les packages ayant un lien de transfert actif ne sont jamais supprimés.
 - Encart « Nettoyage automatique » : réglages, espace utilisé, nettoyage immédiat ; commande `wp migration cleanup` (`--dry-run`, `--keep=`, `--days=`).
+- Les tables de journaux et de cache (Wordfence, WP Mail Logging, WP Umbrella, Redirection, WP Activity Log, sessions WooCommerce…) sont signalées dans l'analyse et dans la liste d'exclusion.
+
+### Modifié
+- Exclure une table n'en retire plus que les **données** : sa structure est conservée et elle est recréée vide sur la destination, pour que les extensions qui l'utilisent continuent de fonctionner.
+
+### Corrigé
+- L'analyse proposait d'exclure toute table de plus de 100 Mo, y compris `postmeta` (produits, commandes) : seules les tables de journaux ou de cache reconnues sont désormais signalées, jamais les registres RGPD.
+- Le journal de débogage `debug.log` (souvent plusieurs centaines de Mo) était copié dans l'archive : il est désormais exclu, comme les fichiers `error_log`, et apparaît dans les éléments exclus du rapport.
 
 ## [1.2.0] - 2026-09-28
 

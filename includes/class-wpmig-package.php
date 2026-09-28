@@ -581,6 +581,7 @@ class WPMIG_Package {
 				'rows'  => number_format_i18n( $t['rows'] ),
 				'size'  => size_format( $t['size'], 1 ),
 				'warn'  => ! empty( $t['warn'] ) ? $t['warn'] : '',
+				'empty' => ! empty( $t['structure_only'] ),
 			);
 		}
 		return array(

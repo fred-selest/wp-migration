@@ -185,7 +185,14 @@ class WPMIG_Scanner {
 		$exts       = array_flip( $opts['exclude_ext'] );
 		$roots      = self::roots();
 		$vcs        = ! empty( $opts['exclude_vcs'] ) ? array_flip( array( '.git', '.svn', '.hg', 'node_modules' ) ) : array();
-		$skip_names = array_flip( array( 'error_log', 'php_errorlog', '.DS_Store', 'Thumbs.db' ) );
+		// Logs (the WordPress debug.log can weigh gigabytes) and system files.
+		$skip_names = array(
+			'debug.log'    => 'journal de débogage',
+			'error_log'    => 'journal d\'erreurs PHP',
+			'php_errorlog' => 'journal d\'erreurs PHP',
+			'.DS_Store'    => '',
+			'Thumbs.db'    => '',
+		);
 
 		$fh = fopen( $list, 'c+b' );
 		if ( ! $fh ) {
@@ -242,6 +249,9 @@ class WPMIG_Scanner {
 					continue; // Broken link, socket, fifo...
 				}
 				if ( isset( $skip_names[ $name ] ) ) {
+					if ( '' !== $skip_names[ $name ] && count( $scan['excluded'] ) < 200 ) {
+						$scan['excluded'][] = $apath . ' (' . $skip_names[ $name ] . ', ' . size_format( (float) sprintf( '%u', @filesize( $abs ) ), 1 ) . ')'; // phpcs:ignore
+					}
 					continue;
 				}
 				if ( '' === $rel && 'r' === $key && ( isset( $root_excluded_files[ $name ] ) || preg_match( '/(_installer\.php|\.wpmig)$/', $name ) ) ) {
