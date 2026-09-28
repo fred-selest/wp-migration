@@ -209,6 +209,45 @@ class WPMIG_CLI {
 	}
 
 	/**
+	 * Delete old packages according to the cleanup settings.
+	 *
+	 * Also removes abandoned builds (older than 24 hours) and orphan files. Packages
+	 * with an active transfer link are never deleted.
+	 *
+	 * ## OPTIONS
+	 *
+	 * [--keep=<number>]
+	 * : Completed packages to keep (0 = no limit). Default: setting.
+	 *
+	 * [--days=<number>]
+	 * : Delete packages older than this (0 = no limit). Default: setting.
+	 *
+	 * [--dry-run]
+	 * : Only list what would be deleted.
+	 *
+	 * ## EXAMPLES
+	 *
+	 *     wp migration cleanup --dry-run
+	 *     wp migration cleanup --keep=2 --days=0
+	 *
+	 * @param array $args       Arguments.
+	 * @param array $assoc_args Options.
+	 */
+	public function cleanup( $args, $assoc_args ) {
+		$dry    = isset( $assoc_args['dry-run'] );
+		$result = WPMIG_Cleanup::run(
+			$dry,
+			isset( $assoc_args['keep'] ) ? (int) $assoc_args['keep'] : null,
+			isset( $assoc_args['days'] ) ? (int) $assoc_args['days'] : null
+		);
+		foreach ( $result['items'] as $item ) {
+			WP_CLI::log( sprintf( '%s %s — %s (%s)', $dry ? 'À supprimer :' : 'Supprimé :', $item['label'], $item['reason'], wpmig_size( $item['size'] ) ) );
+		}
+		$summary = sprintf( '%d élément(s), %s', $result['count'], wpmig_size( $result['bytes'] ) );
+		WP_CLI::success( $dry ? 'Simulation : ' . $summary . ' seraient supprimés.' : 'Nettoyage : ' . $summary . ' libérés.' );
+	}
+
+	/**
 	 * List the packages.
 	 *
 	 * [--format=<format>]

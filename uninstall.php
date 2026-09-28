@@ -10,6 +10,9 @@ if ( ! defined( 'WP_UNINSTALL_PLUGIN' ) ) {
 }
 
 delete_option( 'wpmig_installed' );
+delete_option( 'wpmig_settings' );
+delete_option( 'wpmig_last_cleanup' );
+wp_clear_scheduled_hook( 'wpmig_daily_cleanup' );
 
 $wpmig_dir = rtrim( str_replace( '\\', '/', WP_CONTENT_DIR ), '/' ) . '/wpmig-backups';
 

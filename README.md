@@ -34,6 +34,10 @@ WordPress n'a **pas** besoin d'être installé sur la destination. S'il l'est d�
 | **Installation en cours** | **Installation terminée** |
 | ![Progression](docs/screenshots/8-installeur-progression.png) | ![Terminé](docs/screenshots/9-installeur-termine.png) |
 
+### Nettoyage automatique des anciens packages
+
+![Nettoyage automatique](docs/screenshots/14-nettoyage-automatique.png)
+
 Après la migration, l'administration du nouveau site confirme l'opération et rappelle de supprimer les fichiers d'installation restants :
 
 ![Notification après migration](docs/screenshots/10-notification-apres-migration.png)
@@ -96,6 +100,17 @@ php installer.php --source-url='LIEN' --url=https://nouveau-domaine.fr --db-name
 ```
 
 Le téléchargement se fait par morceaux de 8 Mo (requêtes HTTP `Range`) : il reprend après une coupure, fonctionne avec cURL ou, à défaut, les flux PHP, puis l'archive est contrôlée (package attendu, signature de fin, CRC de chaque bloc) avant toute modification. En ligne de commande sur le site d'origine : `wp migration transfer-link <id>` (`--hours=`, `--revoke`).
+
+### Nettoyage automatique des anciens packages
+
+Les packages occupent de l'espace sur l'hébergement et contiennent une copie complète du site (base de données comprise). L'extension les nettoie automatiquement **après chaque construction et une fois par jour** (WP-Cron) :
+
+- conserve les **5 derniers** packages terminés et supprime ceux de plus de **30 jours** (réglable dans l'encart « Nettoyage automatique », 0 désactive une règle) ;
+- supprime les constructions **abandonnées ou en échec** au bout de 24 h : leur dossier de travail contient un export SQL complet ;
+- supprime les fichiers orphelins du dossier de stockage ;
+- ne supprime **jamais** un package dont le lien de transfert direct est actif, pour ne pas interrompre une migration en cours.
+
+L'encart affiche l'espace utilisé, le prochain et le dernier nettoyage, et propose « Enregistrer et nettoyer maintenant ». En ligne de commande : `wp migration cleanup --dry-run` pour voir ce qui serait supprimé, `--keep=` et `--days=` pour d'autres règles ponctuelles.
 
 ## Ce qui est géré automatiquement
 

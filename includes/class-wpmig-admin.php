@@ -32,6 +32,7 @@ class WPMIG_Admin {
 		add_action( 'wp_ajax_wpmig_import_prepare', array( __CLASS__, 'ajax_import_prepare' ) );
 		add_action( 'admin_post_wpmig_download', array( __CLASS__, 'download' ) );
 		add_action( 'admin_post_wpmig_cleanup_install', array( __CLASS__, 'cleanup_install' ) );
+		add_action( 'admin_post_wpmig_cleanup_settings', array( __CLASS__, 'cleanup_settings' ) );
 		add_action( 'admin_init', array( __CLASS__, 'post_install' ) );
 		add_action( 'admin_notices', array( __CLASS__, 'notices' ) );
 		add_filter( 'plugin_action_links_' . plugin_basename( WPMIG_FILE ), array( __CLASS__, 'action_links' ) );
@@ -262,6 +263,31 @@ class WPMIG_Admin {
 	}
 
 	/**
+	 * Save the cleanup settings, and optionally clean now.
+	 */
+	public static function cleanup_settings() {
+		if ( ! current_user_can( self::CAP ) || ! isset( $_POST['_wpnonce'] ) || ! wp_verify_nonce( sanitize_text_field( wp_unslash( $_POST['_wpnonce'] ) ), 'wpmig_cleanup_settings' ) ) {
+			wp_die( 'Accès refusé.', 403 );
+		}
+		WPMIG_Cleanup::save_settings(
+			array(
+				'keep' => isset( $_POST['keep'] ) ? absint( $_POST['keep'] ) : 5,
+				'days' => isset( $_POST['days'] ) ? absint( $_POST['days'] ) : 30,
+			)
+		);
+		$args = array( 'page' => self::SLUG );
+		if ( isset( $_POST['clean_now'] ) ) {
+			$result          = WPMIG_Cleanup::run();
+			$args['cleaned'] = $result['count'];
+			$args['freed']   = rawurlencode( wpmig_size( $result['bytes'] ) );
+		} else {
+			$args['saved'] = 1;
+		}
+		wp_safe_redirect( add_query_arg( $args, admin_url( 'admin.php' ) ) . '#wpmig-cleanup' );
+		exit;
+	}
+
+	/**
 	 * Admin notices.
 	 */
 	public static function notices() {
@@ -320,6 +346,7 @@ class WPMIG_Admin {
 
 		self::render_wizard();
 		self::render_packages();
+		self::render_cleanup();
 		self::render_import();
 		self::render_help();
 		echo '</div>';
@@ -467,6 +494,54 @@ class WPMIG_Admin {
 			echo '</td></tr>';
 		}
 		echo '</tbody></table></div>';
+	}
+
+	/**
+	 * Cleanup settings.
+	 */
+	private static function render_cleanup() {
+		$settings = WPMIG_Cleanup::settings();
+		$last     = get_option( WPMIG_Cleanup::LAST );
+		$pending  = WPMIG_Cleanup::plan();
+		// phpcs:disable WordPress.Security.NonceVerification -- display only.
+		?>
+		<div class="wpmig-card" id="wpmig-cleanup">
+			<h2>Nettoyage automatique</h2>
+			<?php if ( isset( $_GET['saved'] ) ) : ?>
+				<div class="notice notice-success inline"><p>Réglages enregistrés.</p></div>
+			<?php elseif ( isset( $_GET['cleaned'] ) ) : ?>
+				<div class="notice notice-success inline"><p><?php echo esc_html( absint( $_GET['cleaned'] ) ? sprintf( 'Nettoyage effectué : %d élément(s) supprimé(s), %s libérés.', absint( $_GET['cleaned'] ), isset( $_GET['freed'] ) ? sanitize_text_field( wp_unslash( $_GET['freed'] ) ) : '0' ) : 'Nettoyage effectué : rien à supprimer.' ); ?></p></div>
+			<?php endif; ?>
+			<p>Les anciens packages occupent de l'espace sur l'hébergement et contiennent une copie complète du site. Le nettoyage s'exécute après chaque construction et une fois par jour. Les packages ayant un lien de transfert actif ne sont jamais supprimés ; les constructions abandonnées ou en échec le sont après 24 h.</p>
+			<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" class="wpmig-cleanup-form">
+				<input type="hidden" name="action" value="wpmig_cleanup_settings">
+				<?php wp_nonce_field( 'wpmig_cleanup_settings' ); ?>
+				<label>Conserver les <input type="number" name="keep" min="0" max="1000" value="<?php echo esc_attr( $settings['keep'] ); ?>" class="small-text"> derniers packages</label>
+				<label>Supprimer les packages de plus de <input type="number" name="days" min="0" max="3650" value="<?php echo esc_attr( $settings['days'] ); ?>" class="small-text"> jours</label>
+				<p class="description">0 désactive la règle correspondante.</p>
+				<p>
+					<button type="submit" class="button">Enregistrer</button>
+					<button type="submit" name="clean_now" value="1" class="button button-secondary">Enregistrer et nettoyer maintenant</button>
+				</p>
+			</form>
+			<p class="description">
+				<?php
+				echo esc_html( 'Espace utilisé par les packages : ' . wpmig_size( WPMIG_Cleanup::storage_size() ) . '.' );
+				if ( $pending ) {
+					$bytes = 0;
+					foreach ( $pending as $item ) {
+						$bytes += $item['size'];
+					}
+					echo ' ' . esc_html( sprintf( 'Prochain nettoyage : %d élément(s), %s.', count( $pending ), wpmig_size( $bytes ) ) );
+				}
+				if ( is_array( $last ) && ! empty( $last['time'] ) ) {
+					echo ' ' . esc_html( $last['count'] ? sprintf( 'Dernier nettoyage : %s (%d élément(s), %s libérés).', wpmig_date( $last['time'] ), $last['count'], wpmig_size( $last['bytes'] ) ) : sprintf( 'Dernier nettoyage : %s (rien à supprimer).', wpmig_date( $last['time'] ) ) );
+				}
+				?>
+			</p>
+		</div>
+		<?php
+		// phpcs:enable
 	}
 
 	/**
