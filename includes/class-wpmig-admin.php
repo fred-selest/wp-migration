@@ -33,6 +33,8 @@ class WPMIG_Admin {
 		add_action( 'admin_post_wpmig_download', array( __CLASS__, 'download' ) );
 		add_action( 'admin_post_wpmig_cleanup_install', array( __CLASS__, 'cleanup_install' ) );
 		add_action( 'admin_post_wpmig_cleanup_settings', array( __CLASS__, 'cleanup_settings' ) );
+		add_action( 'admin_post_wpmig_report_download', array( __CLASS__, 'report_download' ) );
+		add_action( 'admin_post_wpmig_report_delete', array( __CLASS__, 'report_delete' ) );
 		add_action( 'admin_init', array( __CLASS__, 'post_install' ) );
 		add_action( 'admin_notices', array( __CLASS__, 'notices' ) );
 		add_filter( 'plugin_action_links_' . plugin_basename( WPMIG_FILE ), array( __CLASS__, 'action_links' ) );
@@ -288,6 +290,48 @@ class WPMIG_Admin {
 	}
 
 	/**
+	 * Download the migration report as a text file.
+	 */
+	public static function report_download() {
+		if ( ! current_user_can( self::CAP ) || ! isset( $_GET['_wpnonce'] ) || ! wp_verify_nonce( sanitize_text_field( wp_unslash( $_GET['_wpnonce'] ) ), 'wpmig_report_download' ) ) {
+			wp_die( 'Accès refusé.', 403 );
+		}
+		$report = WPMIG_Report::get();
+		if ( ! $report ) {
+			wp_die( 'Aucun rapport de migration.', 404 );
+		}
+		$host = (string) wp_parse_url( isset( $report['destination']['home'] ) ? $report['destination']['home'] : home_url(), PHP_URL_HOST );
+		$name = 'rapport-migration-' . sanitize_file_name( $host ) . '-' . gmdate( 'Ymd-His', (int) $report['finished'] ) . '.txt';
+		nocache_headers();
+		header( 'Content-Type: text/plain; charset=utf-8' );
+		header( 'Content-Disposition: attachment; filename="' . $name . '"' );
+		header( 'X-Content-Type-Options: nosniff' );
+		echo "\xEF\xBB\xBF" . WPMIG_Report::to_text( $report ); // phpcs:ignore WordPress.Security.EscapeOutput -- plain text download.
+		exit;
+	}
+
+	/**
+	 * Delete the migration report.
+	 */
+	public static function report_delete() {
+		if ( ! current_user_can( self::CAP ) || ! isset( $_GET['_wpnonce'] ) || ! wp_verify_nonce( sanitize_text_field( wp_unslash( $_GET['_wpnonce'] ) ), 'wpmig_report_delete' ) ) {
+			wp_die( 'Accès refusé.', 403 );
+		}
+		WPMIG_Report::delete();
+		wp_safe_redirect( admin_url( 'admin.php?page=' . self::SLUG . '&report_deleted=1' ) );
+		exit;
+	}
+
+	/**
+	 * URL of the report page.
+	 *
+	 * @return string
+	 */
+	public static function report_url() {
+		return admin_url( 'admin.php?page=' . self::SLUG . '&view=report' );
+	}
+
+	/**
 	 * Admin notices.
 	 */
 	public static function notices() {
@@ -299,7 +343,7 @@ class WPMIG_Admin {
 			if ( $left ) {
 				echo '<div class="notice notice-error"><p><strong>WP Migration :</strong> impossible de supprimer : ' . esc_html( implode( ', ', array_map( 'basename', $left ) ) ) . '. Supprimez-les par FTP.</p></div>';
 			} else {
-				echo '<div class="notice notice-success is-dismissible"><p><strong>WP Migration :</strong> fichiers d\'installation supprimés. La migration est terminée.</p></div>';
+				echo '<div class="notice notice-success is-dismissible"><p><strong>WP Migration :</strong> fichiers d\'installation supprimés. La migration est terminée.' . ( WPMIG_Report::get() ? ' <a href="' . esc_url( self::report_url() ) . '">Voir le rapport de migration</a>' : '' ) . '</p></div>';
 			}
 			return;
 		}
@@ -311,9 +355,13 @@ class WPMIG_Admin {
 		$left  = WPMIG_Plugin::leftover_install_files();
 		$url   = wp_nonce_url( admin_url( 'admin-post.php?action=wpmig_cleanup_install' ), 'wpmig_cleanup_install' );
 		$from  = is_array( $data ) && ! empty( $data['from'] ) ? $data['from'] : '';
+		$report = WPMIG_Report::get();
 		echo '<div class="notice notice-' . ( $left ? 'warning' : 'success' ) . '"><p><strong>WP Migration :</strong> site migré' . ( $from ? ' depuis <code>' . esc_html( $from ) . '</code>' : '' ) . '. ';
+		if ( $report ) {
+			echo ( ! empty( $report['checks']['ok'] ) ? 'Contrôles réussis : la copie est complète. ' : '<strong>Des points sont à vérifier.</strong> ' ) . '<a href="' . esc_url( self::report_url() ) . '">Voir le rapport de migration</a>. ';
+		}
 		if ( $left ) {
-			echo 'Des fichiers d\'installation sont encore présents sur le serveur (' . esc_html( implode( ', ', array_map( 'basename', $left ) ) ) . ') : ils contiennent une copie complète du site et doivent être supprimés.</p>';
+			echo 'Des fichiers d\'installation sont encore présents sur le serveur (' . esc_html( implode( ', ', array_map( 'basename', $left ) ) ) . ') : ils contiennent une copie complète du site et doivent être supprimés' . ( $report ? ' (le rapport de migration est conservé)' : '' ) . '.</p>';
 			echo '<p><a class="button button-primary" href="' . esc_url( $url ) . '">Supprimer les fichiers d\'installation</a></p></div>';
 		} else {
 			echo 'Pensez à vérifier les réglages des permaliens et de vos extensions de cache / SEO.</p>';
@@ -326,6 +374,11 @@ class WPMIG_Admin {
 	 */
 	public static function page() {
 		if ( ! current_user_can( self::CAP ) ) {
+			return;
+		}
+		// phpcs:ignore WordPress.Security.NonceVerification -- display only.
+		if ( isset( $_GET['view'] ) && 'report' === $_GET['view'] ) {
+			self::render_report_page();
 			return;
 		}
 		echo '<div class="wrap wpmig">';
@@ -344,6 +397,7 @@ class WPMIG_Admin {
 			return;
 		}
 
+		self::render_report_card();
 		self::render_wizard();
 		self::render_packages();
 		self::render_cleanup();
@@ -494,6 +548,211 @@ class WPMIG_Admin {
 			echo '</td></tr>';
 		}
 		echo '</tbody></table></div>';
+	}
+
+	/**
+	 * Status badge.
+	 *
+	 * @param bool   $ok    Success.
+	 * @param string $label Text.
+	 * @return string HTML.
+	 */
+	private static function badge( $ok, $label = '' ) {
+		return '<span class="wpmig-badge ' . ( $ok ? 'wpmig-ok' : 'wpmig-warning' ) . '">' . esc_html( '' !== $label ? $label : ( $ok ? 'OK' : 'À vérifier' ) ) . '</span>';
+	}
+
+	/**
+	 * Summary of the migration that created this site.
+	 */
+	private static function render_report_card() {
+		// phpcs:ignore WordPress.Security.NonceVerification -- display only.
+		if ( isset( $_GET['report_deleted'] ) ) {
+			echo '<div class="notice notice-success is-dismissible"><p>Rapport de migration supprimé.</p></div>';
+		}
+		$report = WPMIG_Report::get();
+		if ( ! $report ) {
+			return;
+		}
+		$c = $report['checks'];
+		?>
+		<div class="wpmig-card wpmig-report-card">
+			<h2>Rapport de migration <?php echo self::badge( ! empty( $c['ok'] ), ! empty( $c['ok'] ) ? 'Copie complète' : count( $c['issues'] ) . ' point(s) à vérifier' ); // phpcs:ignore WordPress.Security.EscapeOutput ?></h2>
+			<p>
+				<?php
+				echo esc_html(
+					sprintf(
+						'Site migré depuis %s le %s : %s fichiers, %s tables, %s lignes, %s erreur(s) SQL.',
+						isset( $report['source']['home'] ) ? $report['source']['home'] : '?',
+						wpmig_date( $report['finished'] ),
+						number_format_i18n( isset( $c['files'] ) ? $c['files'] : 0 ),
+						number_format_i18n( isset( $c['tables'] ) ? $c['tables'] : 0 ),
+						number_format_i18n( isset( $c['rows_imported'] ) ? $c['rows_imported'] : 0 ),
+						number_format_i18n( isset( $c['sql_errors'] ) ? $c['sql_errors'] : 0 )
+					)
+				);
+				?>
+			</p>
+			<p><a class="button button-primary" href="<?php echo esc_url( self::report_url() ); ?>">Voir le rapport complet</a>
+			<a class="button" href="<?php echo esc_url( wp_nonce_url( admin_url( 'admin-post.php?action=wpmig_report_download' ), 'wpmig_report_download' ) ); ?>">Télécharger (.txt)</a></p>
+		</div>
+		<?php
+	}
+
+	/**
+	 * Full migration report.
+	 */
+	private static function render_report_page() {
+		$report = WPMIG_Report::get();
+		echo '<div class="wrap wpmig wpmig-report">';
+		echo '<h1 class="wp-heading-inline">Rapport de migration</h1> ';
+		echo '<a class="page-title-action" href="' . esc_url( admin_url( 'admin.php?page=' . self::SLUG ) ) . '">← WP Migration</a>';
+		echo '<hr class="wp-header-end">';
+		if ( ! $report ) {
+			echo '<div class="wpmig-card"><p>Aucun rapport : ce site n\'a pas été installé avec l\'installeur WP Migration 1.3.0 ou plus récent, ou le rapport a été supprimé.</p></div></div>';
+			return;
+		}
+		$c      = $report['checks'];
+		$tables = WPMIG_Report::tables( $report );
+		$counts = array_count_values( wp_list_pluck( $tables, 'status' ) );
+		$left   = WPMIG_Plugin::leftover_install_files();
+		?>
+		<div class="wpmig-card wpmig-report-status <?php echo ! empty( $c['ok'] ) ? 'is-ok' : 'is-warning'; ?>">
+			<h2><?php echo ! empty( $c['ok'] ) ? '<span class="dashicons dashicons-yes-alt"></span> Migration vérifiée : la copie est complète' : '<span class="dashicons dashicons-warning"></span> Migration terminée : ' . esc_html( count( $c['issues'] ) ) . ' point(s) à vérifier'; ?></h2>
+			<p class="wpmig-report-route"><code><?php echo esc_html( isset( $report['source']['home'] ) ? $report['source']['home'] : '' ); ?></code> → <code><?php echo esc_html( isset( $report['destination']['home'] ) ? $report['destination']['home'] : '' ); ?></code></p>
+			<?php if ( ! empty( $c['issues'] ) ) : ?>
+				<ul class="wpmig-warnings">
+					<?php foreach ( $c['issues'] as $issue ) : ?>
+						<li><?php echo esc_html( $issue ); ?></li>
+					<?php endforeach; ?>
+				</ul>
+			<?php else : ?>
+				<p>Toutes les sommes de contrôle de l'archive sont correctes, tous les fichiers ont été écrits, chaque table contient exactement le nombre de lignes exportées par le site d'origine et aucune requête SQL n'a échoué.</p>
+			<?php endif; ?>
+			<p>
+				<a class="button button-primary" href="<?php echo esc_url( wp_nonce_url( admin_url( 'admin-post.php?action=wpmig_report_download' ), 'wpmig_report_download' ) ); ?>">Télécharger le rapport (.txt)</a>
+				<a class="button" href="<?php echo esc_url( wp_nonce_url( admin_url( 'admin-post.php?action=wpmig_report_delete' ), 'wpmig_report_delete' ) ); ?>" onclick="return confirm('Supprimer définitivement le rapport de migration ?');">Supprimer le rapport</a>
+			</p>
+			<?php if ( $left ) : ?>
+				<div class="notice notice-warning inline"><p>Fichiers d'installation encore présents : <?php echo esc_html( implode( ', ', array_map( 'basename', $left ) ) ); ?>. <a href="<?php echo esc_url( wp_nonce_url( admin_url( 'admin-post.php?action=wpmig_cleanup_install' ), 'wpmig_cleanup_install' ) ); ?>">Les supprimer</a> (le rapport est conservé).</p></div>
+			<?php endif; ?>
+		</div>
+
+		<div class="wpmig-card">
+			<h2>Contrôles</h2>
+			<table class="widefat striped wpmig-report-table"><tbody>
+				<?php foreach ( WPMIG_Report::checks( $report ) as $row ) : ?>
+					<tr><th scope="row"><?php echo esc_html( $row[0] ); ?></th><td><?php echo esc_html( $row[1] ); ?></td><td class="wpmig-report-badge"><?php echo self::badge( $row[2] ); // phpcs:ignore WordPress.Security.EscapeOutput ?></td></tr>
+				<?php endforeach; ?>
+			</tbody></table>
+		</div>
+
+		<div class="wpmig-card">
+			<h2>Informations</h2>
+			<table class="widefat striped wpmig-report-table"><tbody>
+				<?php foreach ( WPMIG_Report::summary( $report ) as $row ) : ?>
+					<tr><th scope="row"><?php echo esc_html( $row[0] ); ?></th><td><?php echo esc_html( $row[1] ); ?></td></tr>
+				<?php endforeach; ?>
+			</tbody></table>
+		</div>
+
+		<div class="wpmig-card">
+			<h2>Source et destination</h2>
+			<table class="widefat striped wpmig-report-table">
+				<thead><tr><th></th><th>Site d'origine</th><th>Ce site</th></tr></thead>
+				<tbody>
+				<?php foreach ( WPMIG_Report::comparison( $report ) as $row ) : ?>
+					<tr><th scope="row"><?php echo esc_html( $row[0] ); ?></th><td><code><?php echo esc_html( '' !== $row[1] ? $row[1] : '—' ); ?></code></td><td><code><?php echo esc_html( '' !== $row[2] ? $row[2] : '—' ); ?></code></td></tr>
+				<?php endforeach; ?>
+				</tbody>
+			</table>
+		</div>
+
+		<div class="wpmig-card">
+			<h2>Tables (<?php echo esc_html( count( $tables ) ); ?>)</h2>
+			<p class="description">
+				<?php
+				echo esc_html(
+					sprintf(
+						'Nombre de lignes exportées par le site d\'origine et comptées dans chaque table juste après l\'import (avant l\'activation des nouvelles tables). %d identique(s), %d structure seule, %d en écart ou absente(s).',
+						isset( $counts['ok'] ) ? $counts['ok'] : 0,
+						isset( $counts['empty'] ) ? $counts['empty'] : 0,
+						( isset( $counts['diff'] ) ? $counts['diff'] : 0 ) + ( isset( $counts['missing'] ) ? $counts['missing'] : 0 )
+					)
+				);
+				?>
+			</p>
+			<details <?php echo ( isset( $counts['diff'] ) || isset( $counts['missing'] ) ) ? 'open' : ''; ?>>
+				<summary>Détail par table</summary>
+				<table class="widefat striped wpmig-report-tables">
+					<thead><tr><th>Table</th><th class="num">Lignes exportées</th><th class="num">Lignes importées</th><th>Statut</th></tr></thead>
+					<tbody>
+					<?php foreach ( $tables as $t ) : ?>
+						<tr class="wpmig-t-<?php echo esc_attr( $t['status'] ); ?>">
+							<td><code><?php echo esc_html( $t['name'] ); ?></code></td>
+							<td class="num"><?php echo esc_html( null === $t['exported'] ? '?' : number_format_i18n( $t['exported'] ) ); ?></td>
+							<td class="num"><?php echo esc_html( null === $t['imported'] ? '—' : number_format_i18n( $t['imported'] ) ); ?></td>
+							<td><span class="dashicons <?php echo in_array( $t['status'], array( 'ok', 'empty' ), true ) ? 'dashicons-yes' : 'dashicons-warning'; ?>"></span> <?php echo esc_html( $t['label'] ); ?></td>
+						</tr>
+					<?php endforeach; ?>
+					</tbody>
+				</table>
+			</details>
+		</div>
+
+		<?php if ( $report['replacements'] ) : ?>
+		<div class="wpmig-card">
+			<h2>Remplacements dans la base de données</h2>
+			<p class="description">Appliqués à toutes les tables, y compris dans les données sérialisées et JSON (avec leurs variantes échappées et encodées).</p>
+			<ul class="wpmig-report-list">
+				<?php foreach ( $report['replacements'] as $pair ) : ?>
+					<li><code><?php echo esc_html( $pair[0] ); ?></code> → <code><?php echo esc_html( $pair[1] ); ?></code></li>
+				<?php endforeach; ?>
+			</ul>
+		</div>
+		<?php endif; ?>
+
+		<?php if ( $report['excluded'] || $report['warnings'] || $report['notices'] ) : ?>
+		<div class="wpmig-card">
+			<h2>Exclusions et remarques</h2>
+			<?php if ( $report['excluded'] ) : ?>
+				<details><summary>Exclus volontairement du package par le site d'origine (<?php echo esc_html( count( $report['excluded'] ) ); ?>)</summary>
+					<ul class="wpmig-report-list">
+						<?php foreach ( $report['excluded'] as $item ) : ?>
+							<li><code><?php echo esc_html( $item ); ?></code></li>
+						<?php endforeach; ?>
+					</ul>
+				</details>
+			<?php endif; ?>
+			<?php if ( $report['warnings'] ) : ?>
+				<details open><summary>Avertissements (<?php echo esc_html( count( $report['warnings'] ) ); ?>)</summary>
+					<ul class="wpmig-warnings">
+						<?php foreach ( $report['warnings'] as $item ) : ?>
+							<li><?php echo esc_html( $item ); ?></li>
+						<?php endforeach; ?>
+					</ul>
+				</details>
+			<?php endif; ?>
+			<?php if ( $report['notices'] ) : ?>
+				<details><summary>Remarques (<?php echo esc_html( count( $report['notices'] ) ); ?>)</summary>
+					<ul class="wpmig-report-list">
+						<?php foreach ( $report['notices'] as $item ) : ?>
+							<li><?php echo esc_html( $item ); ?></li>
+						<?php endforeach; ?>
+					</ul>
+				</details>
+			<?php endif; ?>
+		</div>
+		<?php endif; ?>
+
+		<?php if ( '' !== (string) $report['log'] ) : ?>
+		<div class="wpmig-card">
+			<h2>Journal de l'installation</h2>
+			<p class="description">Heures UTC. Copie du fichier <code>install.log</code> de l'installeur.</p>
+			<pre class="wpmig-pre wpmig-log"><?php echo esc_html( $report['log'] ); ?></pre>
+		</div>
+		<?php endif; ?>
+		</div>
+		<?php
 	}
 
 	/**

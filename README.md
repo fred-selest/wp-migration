@@ -38,9 +38,15 @@ WordPress n'a **pas** besoin d'être installé sur la destination. S'il l'est d�
 
 ![Nettoyage automatique](docs/screenshots/14-nettoyage-automatique.png)
 
-Après la migration, l'administration du nouveau site confirme l'opération et rappelle de supprimer les fichiers d'installation restants :
+Après la migration, l'administration du nouveau site confirme l'opération avec le résultat des contrôles et rappelle, le cas échéant, de supprimer les fichiers d'installation restants :
 
 ![Notification après migration](docs/screenshots/10-notification-apres-migration.png)
+
+### Rapport de migration
+
+Conservé dans l'administration du nouveau site, même après la suppression des fichiers d'installation :
+
+![Rapport de migration](docs/screenshots/15-rapport-de-migration.png)
 
 ## Compatibilité
 
@@ -77,7 +83,7 @@ En SSH : `wp migration build --dir=/chemin/export` (un mot de passe est génér�
    - **Vérifications** : version de PHP compatible avec la version de WordPress, extensions, droits d'écriture, espace disque, intégrité de l'archive ;
    - **Base de données & URL** : identifiants (pré-remplis si un `wp-config.php` existe déjà), préfixe des tables (modifiable), nouvelle URL (détectée automatiquement), options avancées, création facultative d'un compte administrateur ;
    - **Installation** : vérification complète de l'archive (CRC de chaque bloc) **avant toute modification**, puis extraction et import, avec progression et reprise automatique en cas de coupure ;
-   - **Terminé** : bouton pour supprimer l'installeur, l'archive et les fichiers temporaires, puis connexion.
+   - **Terminé** : résumé des contrôles, bouton pour supprimer l'installeur, l'archive et les fichiers temporaires, puis connexion.
 
 En SSH :
 
@@ -100,6 +106,17 @@ php installer.php --source-url='LIEN' --url=https://nouveau-domaine.fr --db-name
 ```
 
 Le téléchargement se fait par morceaux de 8 Mo (requêtes HTTP `Range`) : il reprend après une coupure, fonctionne avec cURL ou, à défaut, les flux PHP, puis l'archive est contrôlée (package attendu, signature de fin, CRC de chaque bloc) avant toute modification. En ligne de commande sur le site d'origine : `wp migration transfer-link <id>` (`--hours=`, `--revoke`).
+
+### Rapport de migration
+
+À la fin de l'installation, l'installeur **contrôle la copie** puis enregistre un rapport dans la base du nouveau site. Il reste consultable dans **WP Migration → Rapport de migration** après la suppression des fichiers d'installation :
+
+- **résultat global** : « Migration vérifiée : la copie est complète » ou la liste des points à vérifier ;
+- **contrôles** : sommes de contrôle de l'archive, fichiers extraits sur le nombre contenu dans l'archive, tables présentes, **nombre de lignes de chaque table comparé à celui exporté par le site d'origine** (compté juste après l'import, avant toute modification), requêtes SQL en erreur ;
+- **source / destination** : adresses, dossiers, versions de WordPress, PHP et MySQL / MariaDB, préfixe des tables, base de données ;
+- détail **par table** (lignes exportées / importées, tables de journaux recréées vides), remplacements effectués, éléments exclus par le site d'origine (caches, `debug.log`…), avertissements et **journal complet** de l'installation.
+
+Le rapport se télécharge en texte (bouton « Télécharger le rapport ») ; en ligne de commande : `wp migration report` (`--format=json` ; code de sortie 1 si une anomalie a été détectée, pratique dans un script). L'installeur en ligne de commande affiche aussi le résumé des contrôles à la fin.
 
 ### Nettoyage automatique des anciens packages
 
@@ -157,7 +174,7 @@ L'encart affiche l'espace utilisé, le prochain et le dernier nettoyage, et prop
 | « Installation déjà lancée depuis un autre navigateur » | Supprimer le dossier `wpmig-installer-data-…` sur le serveur puis recharger l'installeur. |
 | Autres adresses restantes (ancien sous-domaine, CDN…) | Ajouter un remplacement supplémentaire `https://cdn.ancien.fr => https://cdn.nouveau.fr`. |
 | « Archive corrompue » pendant la vérification | Rien n'a été modifié : renvoyer l'archive en mode binaire et relancer. |
-| Journal détaillé | `wpmig-installer-data-…/install.log` (avant le nettoyage). |
+| Journal détaillé | **WP Migration → Rapport de migration** sur le nouveau site (journal complet inclus), ou `wpmig-installer-data-…/install.log` avant le nettoyage. |
 
 ## Développement
 

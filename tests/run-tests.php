@@ -241,5 +241,68 @@ check( 'nouveau préfixe', 'abc_', $ed2->get_prefix() );
 $skeleton = new WPMIG_Config_Editor( WPMIG_Config_Editor::skeleton() );
 check( 'squelette valide', true, $skeleton->lint() );
 
+echo "\nRapport de migration\n";
+if ( ! defined( 'ABSPATH' ) ) {
+	define( 'ABSPATH', __DIR__ . '/' );
+}
+// Minimal stand-ins for the WordPress functions used by the report.
+if ( ! function_exists( 'number_format_i18n' ) ) {
+	function number_format_i18n( $n ) {
+		return number_format( (float) $n, 0, ',', ' ' );
+	}
+}
+if ( ! function_exists( 'wpmig_size' ) ) {
+	function wpmig_size( $bytes ) {
+		return round( $bytes / 1048576, 1 ) . ' Mo';
+	}
+}
+if ( ! function_exists( 'wpmig_date' ) ) {
+	function wpmig_date( $ts ) {
+		return gmdate( 'd/m/Y H:i', (int) $ts );
+	}
+}
+require dirname( __DIR__ ) . '/includes/class-wpmig-report.php';
+$report = array(
+	'package'      => array( 'id' => '20260101_000000_abcdef012345', 'name' => 'site', 'created' => '2026-01-01 00:00:00', 'archive_size' => 1048576 ),
+	'source'       => array( 'home' => 'https://old.fr', 'prefix' => 'wp_1514363_', 'db' => '10.11' ),
+	'destination'  => array( 'home' => 'https://new.fr', 'prefix' => 'wp_', 'db' => '11.4', 'db_name' => 'base', 'db_host' => 'localhost' ),
+	'options'      => array( 'db_action' => 'replace' ),
+	'started'      => 1000,
+	'finished'     => 1125,
+	'mode'         => 'cli',
+	'transfer'     => array( 'size' => 1048576, 'seconds' => 3 ),
+	'checks'       => array( 'ok' => false, 'issues' => array( '1 table(s) absente(s) ou avec un nombre de lignes différent de la source : wp_1514363_posts.' ), 'verified' => true, 'files_expected' => 10, 'files' => 10, 'files_failed' => 0, 'bytes' => 2048, 'tables' => 5, 'tables_bad' => 2, 'rows_exported' => 20, 'rows_imported' => 18, 'sql_queries' => 9, 'sql_errors' => 0, 'broken' => 0 ),
+	'tables'       => array(
+		array( 'wp_1514363_options', 10, 10, 0 ),
+		array( 'wp_1514363_posts', 8, 6, 0 ),
+		array( 'wp_1514363_umbrella_log', 0, 0, 1 ),
+		array( 'wp_1514363_old', null, 4, 0 ),
+		array( 'wp_1514363_lost', 2, null, 0 ),
+	),
+	'replacements' => array( array( 'https://old.fr', 'https://new.fr' ) ),
+	'excluded'     => array( 'wp-content/debug.log (journal de débogage, 587,8 Mo)' ),
+	'warnings'     => array(),
+	'notices'      => array(),
+	'log'          => "ligne 1\nligne 2\n",
+);
+$tables   = WPMIG_Report::tables( $report );
+$statuses = array();
+foreach ( $tables as $t ) {
+	$statuses[ $t['name'] ] = $t['status'];
+}
+check( 'statuts des tables (préfixe renommé)', array( 'wp_options' => 'ok', 'wp_posts' => 'diff', 'wp_umbrella_log' => 'empty', 'wp_old' => 'unknown', 'wp_lost' => 'missing' ), $statuses );
+check( 'libellé de l\'écart', 'Écart de -2 ligne(s)', $tables[1]['label'] );
+$rows = array();
+foreach ( WPMIG_Report::checks( $report ) as $row ) {
+	$rows[ $row[0] ] = $row[2];
+}
+check( 'contrôles', array( 'Intégrité de l\'archive' => true, 'Fichiers' => true, 'Tables' => false, 'Lignes' => false, 'Requêtes SQL' => true ), $rows );
+check( 'durée', '2 min 05 s', WPMIG_Report::duration( 125 ) );
+$text = WPMIG_Report::to_text( $report );
+check( 'texte : résultat', true, false !== strpos( $text, 'RÉSULTAT : 1 point(s) à vérifier.' ) );
+check( 'texte : table en écart', true, (bool) preg_match( '/^wp_posts\s+8\s+6  Écart de -2 ligne\(s\)$/mu', $text ) );
+check( 'texte : colonnes alignées malgré les accents', true, (bool) preg_match( '/^\[OK\] Intégrité de l\'archive {4}Sommes/mu', $text ) );
+check( 'texte : exclusions et journal', true, false !== strpos( $text, 'debug.log' ) && false !== strpos( $text, "ligne 1\nligne 2" ) );
+
 echo "\n" . ( $count - $failures ) . '/' . $count . " tests réussis\n";
 exit( $failures ? 1 : 0 );

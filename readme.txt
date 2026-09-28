@@ -4,7 +4,7 @@ Tags: migration, duplicate, clone, backup, move
 Requires at least: 4.9
 Tested up to: 7.1
 Requires PHP: 5.6
-Stable tag: 1.2.0
+Stable tag: 1.3.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -20,6 +20,8 @@ WP Migration crée un package (archive .wpmig + installer.php) à déposer sur l
 * Compatibilité MySQL / MariaDB (collations, moteurs, max_allowed_packet).
 * Exclusion des caches, sauvegardes et composants propres aux hébergeurs.
 * Installeur protégé par mot de passe, suppression des fichiers d'installation.
+* Transfert direct de serveur à serveur, sans FTP.
+* Rapport de migration vérifié (fichiers, tables, nombre de lignes, erreurs SQL) conservé dans l'administration du nouveau site.
 * Commandes WP-CLI (wp migration build) et installeur en ligne de commande.
 
 Multisite non pris en charge.
@@ -31,6 +33,13 @@ Multisite non pris en charge.
 3. Envoyer l'archive et installer.php sur le nouveau serveur puis ouvrir installer.php dans le navigateur.
 
 == Changelog ==
+
+= 1.3.0 =
+* Rapport de migration conservé dans l'administration du nouveau site : contrôles, comparaison source / destination, lignes par table, journal complet, export texte et `wp migration report`.
+* Contrôle du nombre de lignes de chaque table importée par rapport à l'export du site d'origine.
+* Nettoyage automatique des anciens packages.
+* Tables de journaux et de cache signalées ; exclure une table conserve sa structure.
+* debug.log et error_log exclus de l'archive.
 
 = 1.2.0 =
 * Transfert direct de serveur à serveur (lien secret, temporaire et révocable).

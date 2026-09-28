@@ -29,4 +29,19 @@
 .wpmig .wpmig-transfer-active{color:#00a32a;font-size:12px}
 .wpmig .wpmig-cleanup-form label{display:inline-block;margin:4px 24px 4px 0}
 .wpmig code.wpmig-password{font-size:15px;padding:3px 8px;user-select:all}
+.wpmig h2 .wpmig-badge{vertical-align:middle;margin-left:8px;min-width:0}
+.wpmig .wpmig-report-status.is-ok{border-left:4px solid #00a32a}
+.wpmig .wpmig-report-status h2 .dashicons{font-size:26px;width:26px;height:26px;vertical-align:-5px;margin-right:4px}
+.wpmig .wpmig-report-status.is-ok h2 .dashicons{color:#00a32a}.wpmig .wpmig-report-status.is-warning h2 .dashicons{color:#dba617}
+.wpmig .wpmig-report-tables .dashicons-yes{color:#00a32a}.wpmig .wpmig-report-tables .dashicons-warning{color:#d63638}
+.wpmig .wpmig-report-status.is-warning{border-left:4px solid #dba617}
+.wpmig .wpmig-report-route code{font-size:14px}
+.wpmig .wpmig-report-table th{width:26%;font-weight:600}
+.wpmig .wpmig-report-table td code{word-break:break-all}
+.wpmig .wpmig-report-badge{width:110px;text-align:right}
+.wpmig .wpmig-report-tables .num{text-align:right;white-space:nowrap}
+.wpmig .wpmig-report-tables tr.wpmig-t-diff td,.wpmig .wpmig-report-tables tr.wpmig-t-missing td{color:#b32d2e;font-weight:600}
+.wpmig .wpmig-report-tables tr.wpmig-t-empty td{color:#646970}
+.wpmig .wpmig-report-list{list-style:disc;padding-left:20px;max-height:300px;overflow:auto}
+.wpmig .wpmig-log{max-height:480px;overflow:auto;font-size:12px;line-height:1.5}
 @media (max-width:782px){.wpmig .wpmig-actions{justify-content:flex-start}}

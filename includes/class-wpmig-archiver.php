@@ -41,10 +41,14 @@ class WPMIG_Archiver {
 		$uploads = wp_upload_dir( null, false );
 		$config  = WPMIG_Plugin::wp_config_path();
 		$tables  = array();
+		$counts  = isset( $data['dump']['counts'] ) ? $data['dump']['counts'] : array();
 		foreach ( $data['report']['db']['tables'] as $t ) {
 			$tables[] = array(
-				'name' => $t['name'],
-				'rows' => $t['rows'],
+				'name'           => $t['name'],
+				'rows'           => $t['rows'],
+				// Exact number of rows written to the dump: compared by the installer after the import.
+				'exported'       => isset( $counts[ $t['name'] ] ) ? (int) $counts[ $t['name'] ] : null,
+				'structure_only' => ! empty( $t['structure_only'] ),
 			);
 		}
 		return array(
@@ -84,8 +88,11 @@ class WPMIG_Archiver {
 			'wp_config'   => ( $config && is_readable( $config ) ) ? base64_encode( (string) file_get_contents( $config ) ) : '', // phpcs:ignore
 			'stats'       => array(
 				'files' => isset( $data['scan']['count'] ) ? $data['scan']['count'] : 0,
+				'dirs'  => isset( $data['scan']['dirs'] ) ? $data['scan']['dirs'] : 0,
 				'size'  => isset( $data['scan']['size'] ) ? $data['scan']['size'] : 0,
 			),
+			// Deliberately left out of the package, listed in the migration report.
+			'excluded'    => isset( $data['scan']['excluded'] ) ? array_values( array_slice( $data['scan']['excluded'], 0, 200 ) ) : array(),
 		);
 	}
 
