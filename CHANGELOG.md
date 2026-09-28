@@ -3,7 +3,7 @@
 Toutes les évolutions notables de WP Migration sont consignées ici.
 Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le projet respecte le [versionnage sémantique](https://semver.org/lang/fr/).
 
-## [Non publié]
+## [1.1.0] - 2026-09-28
 
 ### Ajouté
 - Vérification complète de l'archive (CRC32 de chaque bloc) avant toute modification sur le serveur de destination ; en cas de corruption, rien n'est touché.
@@ -29,4 +29,5 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le pr
 - Protection de l'installeur par mot de passe.
 - Compatibilité WordPress 4.9 à 7.1 et PHP 5.6 à 8.4.
 
+[1.1.0]: https://github.com/fred-selest/wp-migration/releases/tag/v1.1.0
 [1.0.0]: https://github.com/fred-selest/wp-migration/releases/tag/v1.0.0

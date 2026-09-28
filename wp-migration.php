@@ -3,7 +3,7 @@
  * Plugin Name:       WP Migration
  * Plugin URI:        https://github.com/fred-selest/wp-migration
  * Description:       Copie un site WordPress complet (fichiers + base de données) vers un nouveau domaine et/ou un nouvel hébergement. Crée un package (archive + installer.php) à déposer sur le serveur de destination.
- * Version:           1.0.0
+ * Version:           1.1.0
  * Requires at least: 4.9
  * Requires PHP:      5.6
  * Author:            fred-selest
@@ -18,7 +18,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'WPMIG_VERSION', '1.0.0' );
+define( 'WPMIG_VERSION', '1.1.0' );
 define( 'WPMIG_FILE', __FILE__ );
 define( 'WPMIG_DIR', plugin_dir_path( __FILE__ ) );
 define( 'WPMIG_URL', plugin_dir_url( __FILE__ ) );
