@@ -1,0 +1,2594 @@
+<?php
+/**
+ * WP Migration — installeur autonome.
+ *
+ * Déposez ce fichier et l'archive .wpmig correspondante dans le dossier du nouveau
+ * site (vide ou existant), puis ouvrez https://votre-domaine/installer.php
+ * (ou en ligne de commande : php installer.php --help).
+ *
+ * Ce fichier est généré par l'extension WP Migration : il contient sa propre copie
+ * du moteur d'extraction, d'import SQL et de remplacement d'URL, et ne dépend pas
+ * de WordPress.
+ *
+ * @package WPMigration
+ */
+
+define( 'WPMIG_INSTALLER', '1.0.0' );
+
+@ini_set( 'display_errors', '0' ); // phpcs:ignore
+error_reporting( E_ALL & ~E_DEPRECATED & ~E_NOTICE & ~E_WARNING );
+
+$wpmig_config = /*WPMIG_CONFIG*/array();
+
+/*WPMIG_LIB*/
+
+/**
+ * wp-config.php editor (tokenizer based, regex fallback).
+ */
+class WPMIG_Config_Editor {
+
+	/**
+	 * PHP code.
+	 *
+	 * @var string
+	 */
+	private $code;
+
+	/**
+	 * Constructor.
+	 *
+	 * @param string $code wp-config.php contents.
+	 */
+	public function __construct( $code ) {
+		$this->code = (string) $code;
+	}
+
+	/**
+	 * Current code.
+	 *
+	 * @return string
+	 */
+	public function code() {
+		return $this->code;
+	}
+
+	/**
+	 * Locate the define() calls of a constant.
+	 *
+	 * @param string $name Constant.
+	 * @return array List of array( start, length, value_code ).
+	 */
+	public function find_defines( $name ) {
+		$found = array();
+		if ( function_exists( 'token_get_all' ) ) {
+			$tokens  = @token_get_all( $this->code );
+			$offsets = array();
+			$pos     = 0;
+			foreach ( $tokens as $i => $t ) {
+				$offsets[ $i ] = $pos;
+				$pos          += strlen( is_array( $t ) ? $t[1] : $t );
+			}
+			$count = count( $tokens );
+			for ( $i = 0; $i < $count; $i++ ) {
+				$t = $tokens[ $i ];
+				if ( ! is_array( $t ) || T_STRING !== $t[0] || 'define' !== strtolower( $t[1] ) ) {
+					continue;
+				}
+				$prev = $this->prev_token( $tokens, $i );
+				if ( null !== $prev && is_array( $prev ) && in_array( $prev[0], array( T_OBJECT_OPERATOR, T_DOUBLE_COLON, T_FUNCTION ), true ) ) {
+					continue;
+				}
+				$j = $this->next_index( $tokens, $i );
+				if ( null === $j || '(' !== $tokens[ $j ] ) {
+					continue;
+				}
+				$k = $this->next_index( $tokens, $j );
+				if ( null === $k || ! is_array( $tokens[ $k ] ) || T_CONSTANT_ENCAPSED_STRING !== $tokens[ $k ][0] || self::unquote( $tokens[ $k ][1] ) !== $name ) {
+					continue;
+				}
+				// Find the comma, then the matching closing parenthesis and the semicolon.
+				$depth       = 1;
+				$value_start = null;
+				$end         = null;
+				for ( $m = $j + 1; $m < $count; $m++ ) {
+					$tok = $tokens[ $m ];
+					if ( '(' === $tok || '[' === $tok || '{' === $tok || ( is_array( $tok ) && in_array( $tok[1], array( '{$', '${' ), true ) ) ) {
+						$depth++;
+					} elseif ( ')' === $tok || ']' === $tok || '}' === $tok ) {
+						$depth--;
+						if ( 0 === $depth ) {
+							$end = $m;
+							break;
+						}
+					} elseif ( ',' === $tok && 1 === $depth && null === $value_start ) {
+						$value_start = $m + 1;
+					}
+				}
+				if ( null === $end || null === $value_start ) {
+					continue;
+				}
+				$semi = $this->next_index( $tokens, $end );
+				$last = ( null !== $semi && ';' === $tokens[ $semi ] ) ? $semi : $end;
+				$vcode = '';
+				for ( $m = $value_start; $m < $end; $m++ ) {
+					$vcode .= is_array( $tokens[ $m ] ) ? $tokens[ $m ][1] : $tokens[ $m ];
+				}
+				$start    = $offsets[ $i ];
+				$stop     = $offsets[ $last ] + strlen( is_array( $tokens[ $last ] ) ? $tokens[ $last ][1] : $tokens[ $last ] );
+				$found[]  = array( $start, $stop - $start, trim( $vcode ) );
+			}
+			return $found;
+		}
+		$re = '/define\s*\(\s*([\'"])' . preg_quote( $name, '/' ) . '\1\s*,\s*((?:\'(?:[^\'\\\\]|\\\\.)*\'|"(?:[^"\\\\]|\\\\.)*"|[^;\'"])*?)\)\s*;/s';
+		if ( preg_match_all( $re, $this->code, $matches, PREG_SET_ORDER | PREG_OFFSET_CAPTURE ) ) {
+			foreach ( $matches as $m ) {
+				$found[] = array( $m[0][1], strlen( $m[0][0] ), trim( $m[2][0] ) );
+			}
+		}
+		return $found;
+	}
+
+	/**
+	 * Index of the next significant token.
+	 *
+	 * @param array $tokens Tokens.
+	 * @param int   $i      Index.
+	 * @return int|null
+	 */
+	private function next_index( $tokens, $i ) {
+		$count = count( $tokens );
+		for ( $j = $i + 1; $j < $count; $j++ ) {
+			if ( is_array( $tokens[ $j ] ) && in_array( $tokens[ $j ][0], array( T_WHITESPACE, T_COMMENT, T_DOC_COMMENT ), true ) ) {
+				continue;
+			}
+			return $j;
+		}
+		return null;
+	}
+
+	/**
+	 * Previous significant token.
+	 *
+	 * @param array $tokens Tokens.
+	 * @param int   $i      Index.
+	 * @return mixed
+	 */
+	private function prev_token( $tokens, $i ) {
+		for ( $j = $i - 1; $j >= 0; $j-- ) {
+			if ( is_array( $tokens[ $j ] ) && in_array( $tokens[ $j ][0], array( T_WHITESPACE, T_COMMENT, T_DOC_COMMENT ), true ) ) {
+				continue;
+			}
+			return $tokens[ $j ];
+		}
+		return null;
+	}
+
+	/**
+	 * Unquote a PHP string literal.
+	 *
+	 * @param string $literal Literal.
+	 * @return string|null Null when it is not a plain literal.
+	 */
+	public static function unquote( $literal ) {
+		$literal = trim( $literal );
+		if ( strlen( $literal ) < 2 ) {
+			return null;
+		}
+		$q = $literal[0];
+		if ( ( "'" !== $q && '"' !== $q ) || substr( $literal, -1 ) !== $q ) {
+			return null;
+		}
+		$inner = substr( $literal, 1, -1 );
+		if ( "'" === $q ) {
+			if ( preg_match( "/(?<!\\\\)'/", str_replace( '\\\\', '', $inner ) ) ) {
+				return null; // Concatenation of several literals.
+			}
+			return preg_replace( "/\\\\([\\\\'])/", '$1', $inner );
+		}
+		if ( preg_match( '/(?<!\\\\)[$"]/', str_replace( '\\\\', '', $inner ) ) ) {
+			return null; // Interpolation or concatenation.
+		}
+		return stripcslashes( $inner );
+	}
+
+	/**
+	 * Literal value of a constant (null if absent or not a literal string).
+	 *
+	 * @param string $name Constant.
+	 * @return string|null
+	 */
+	public function get_define( $name ) {
+		$found = $this->find_defines( $name );
+		if ( ! $found ) {
+			return null;
+		}
+		$last = end( $found );
+		return self::unquote( $last[2] );
+	}
+
+	/**
+	 * Raw value code of a constant.
+	 *
+	 * @param string $name Constant.
+	 * @return string|null
+	 */
+	public function get_define_code( $name ) {
+		$found = $this->find_defines( $name );
+		if ( ! $found ) {
+			return null;
+		}
+		$last = end( $found );
+		return $last[2];
+	}
+
+	/**
+	 * Set (or add) a constant. $value is PHP code.
+	 *
+	 * @param string $name  Constant.
+	 * @param string $value PHP code of the value.
+	 */
+	public function set_define( $name, $value ) {
+		$found = $this->find_defines( $name );
+		$code  = "define( '" . $name . "', " . $value . ' );';
+		if ( $found ) {
+			foreach ( array_reverse( $found ) as $f ) {
+				$this->code = substr( $this->code, 0, $f[0] ) . $code . substr( $this->code, $f[0] + $f[1] );
+			}
+			return;
+		}
+		$this->insert( $code . "\n" );
+	}
+
+	/**
+	 * Remove a constant.
+	 *
+	 * @param string $name Constant.
+	 * @return bool Whether it was defined.
+	 */
+	public function remove_define( $name ) {
+		$found = $this->find_defines( $name );
+		foreach ( array_reverse( $found ) as $f ) {
+			$this->code = substr( $this->code, 0, $f[0] ) . '/* ' . $name . ' supprimé par WP Migration */' . substr( $this->code, $f[0] + $f[1] );
+		}
+		return ! empty( $found );
+	}
+
+	/**
+	 * Insert code before the "stop editing" marker / wp-settings.php include.
+	 *
+	 * @param string $code Code.
+	 */
+	private function insert( $code ) {
+		$markers = array(
+			'/\/\*\s*That\'s all, stop editing/i',
+			'/\/\*\s*C\'est tout, ne touchez pas/i',
+			'/\/\*\*\s*Absolute path to the WordPress directory/i',
+			'/if\s*\(\s*!\s*defined\s*\(\s*[\'"]ABSPATH[\'"]\s*\)\s*\)/i',
+			'/require_once\s*\(?\s*ABSPATH\s*\.\s*[\'"]wp-settings\.php/i',
+		);
+		foreach ( $markers as $re ) {
+			if ( preg_match( $re, $this->code, $m, PREG_OFFSET_CAPTURE ) ) {
+				$this->code = substr( $this->code, 0, $m[0][1] ) . $code . "\n" . substr( $this->code, $m[0][1] );
+				return;
+			}
+		}
+		if ( preg_match( '/\?>\s*$/', $this->code, $m, PREG_OFFSET_CAPTURE ) ) {
+			$this->code = substr( $this->code, 0, $m[0][1] ) . $code . substr( $this->code, $m[0][1] );
+			return;
+		}
+		$this->code .= "\n" . $code;
+	}
+
+	/**
+	 * Table prefix.
+	 *
+	 * @return string|null
+	 */
+	public function get_prefix() {
+		if ( preg_match( '/\$table_prefix\s*=\s*([\'"])([A-Za-z0-9_]*)\1\s*;/', $this->code, $m ) ) {
+			return $m[2];
+		}
+		return null;
+	}
+
+	/**
+	 * Set the table prefix.
+	 *
+	 * @param string $prefix Prefix.
+	 */
+	public function set_prefix( $prefix ) {
+		$line  = '$table_prefix = ' . var_export( $prefix, true ) . ';';
+		$count = 0;
+		$this->code = preg_replace_callback(
+			'/\$table_prefix\s*=\s*[^;]*;/',
+			function () use ( $line ) {
+				return $line;
+			},
+			$this->code,
+			-1,
+			$count
+		);
+		if ( ! $count ) {
+			$this->insert( $line . "\n" );
+		}
+	}
+
+	/**
+	 * Replace the authentication keys and salts.
+	 */
+	public function regenerate_salts() {
+		foreach ( array( 'AUTH_KEY', 'SECURE_AUTH_KEY', 'LOGGED_IN_KEY', 'NONCE_KEY', 'AUTH_SALT', 'SECURE_AUTH_SALT', 'LOGGED_IN_SALT', 'NONCE_SALT' ) as $key ) {
+			$this->set_define( $key, var_export( WPMIG_Installer::random_string( 64 ), true ) );
+		}
+	}
+
+	/**
+	 * Apply a text transformation to the code.
+	 *
+	 * @param callable $callback Callback.
+	 */
+	public function transform( $callback ) {
+		$this->code = call_user_func( $callback, $this->code );
+	}
+
+	/**
+	 * Check the PHP syntax (PHP 7+).
+	 *
+	 * @return string|true Error message or true.
+	 */
+	public function lint() {
+		if ( ! defined( 'TOKEN_PARSE' ) || ! function_exists( 'token_get_all' ) ) {
+			return true;
+		}
+		try {
+			token_get_all( $this->code, TOKEN_PARSE );
+		} catch ( ParseError $e ) {
+			return $e->getMessage() . ' (ligne ' . $e->getLine() . ')';
+		}
+		return true;
+	}
+
+	/**
+	 * Minimal wp-config.php.
+	 *
+	 * @return string
+	 */
+	public static function skeleton() {
+		$code  = "<?php\n/**\n * wp-config.php généré par WP Migration.\n */\n\n";
+		$code .= "define( 'DB_NAME', '' );\ndefine( 'DB_USER', '' );\ndefine( 'DB_PASSWORD', '' );\ndefine( 'DB_HOST', 'localhost' );\n";
+		$code .= "define( 'DB_CHARSET', 'utf8mb4' );\ndefine( 'DB_COLLATE', '' );\n\n";
+		foreach ( array( 'AUTH_KEY', 'SECURE_AUTH_KEY', 'LOGGED_IN_KEY', 'NONCE_KEY', 'AUTH_SALT', 'SECURE_AUTH_SALT', 'LOGGED_IN_SALT', 'NONCE_SALT' ) as $key ) {
+			$code .= "define( '" . $key . "', " . var_export( WPMIG_Installer::random_string( 64 ), true ) . " );\n";
+		}
+		$code .= "\n\$table_prefix = 'wp_';\n\ndefine( 'WP_DEBUG', false );\n\n/* That's all, stop editing! Happy publishing. */\n\n";
+		$code .= "if ( ! defined( 'ABSPATH' ) ) {\n\tdefine( 'ABSPATH', __DIR__ . '/' );\n}\n\nrequire_once ABSPATH . 'wp-settings.php';\n";
+		return $code;
+	}
+}
+
+/**
+ * Installer.
+ */
+class WPMIG_Installer {
+
+	/**
+	 * Package configuration (embedded at build time).
+	 *
+	 * @var array
+	 */
+	private $config;
+
+	/**
+	 * This file.
+	 *
+	 * @var string
+	 */
+	private $file;
+
+	/**
+	 * Installation directory.
+	 *
+	 * @var string
+	 */
+	private $root;
+
+	/**
+	 * Working directory.
+	 *
+	 * @var string
+	 */
+	private $data_dir;
+
+	/**
+	 * Installation state.
+	 *
+	 * @var array
+	 */
+	private $state = array();
+
+	/**
+	 * Manifest cache.
+	 *
+	 * @var array|null
+	 */
+	private $manifest = null;
+
+	/**
+	 * Running from the command line.
+	 *
+	 * @var bool
+	 */
+	private $cli = false;
+
+	/**
+	 * Constructor.
+	 *
+	 * @param array  $config Configuration.
+	 * @param string $file   Installer file.
+	 */
+	public function __construct( array $config, $file ) {
+		$this->config   = $config;
+		$this->file     = $file;
+		$this->root     = rtrim( str_replace( '\\', '/', dirname( $file ) ), '/' );
+		$this->data_dir = $this->root . '/wpmig-installer-data-' . ( isset( $config['package'] ) ? preg_replace( '/[^a-z0-9_]/i', '', $config['package'] ) : 'x' );
+		$this->cli      = ( 'cli' === PHP_SAPI );
+	}
+
+	/* ------------------------------------------------------------------ */
+	/* Utilities                                                           */
+	/* ------------------------------------------------------------------ */
+
+	/**
+	 * Random string.
+	 *
+	 * @param int  $length Length.
+	 * @param bool $simple Only lowercase letters and digits.
+	 * @return string
+	 */
+	public static function random_string( $length, $simple = false ) {
+		$chars = $simple ? 'abcdefghijklmnopqrstuvwxyz0123456789' : 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#%^&*()-_[]{}<>~+=,.;:/?|';
+		$max   = strlen( $chars ) - 1;
+		$out   = '';
+		for ( $i = 0; $i < $length; $i++ ) {
+			if ( function_exists( 'random_int' ) ) {
+				$n = random_int( 0, $max );
+			} else {
+				$n = mt_rand( 0, $max ); // phpcs:ignore
+			}
+			$out .= $chars[ $n ];
+		}
+		return $out;
+	}
+
+	/**
+	 * Create the working directory.
+	 *
+	 * @throws WPMIG_Exception When not writable.
+	 */
+	private function ensure_data_dir() {
+		if ( ! is_dir( $this->data_dir ) && ! @mkdir( $this->data_dir, 0755, true ) ) {
+			throw new WPMIG_Exception( 'Impossible de créer le dossier de travail ' . $this->data_dir . ' : le dossier d\'installation doit être accessible en écriture.' );
+		}
+		$files = array(
+			'index.php' => "<?php\n// Silence is golden.\n",
+			'.htaccess' => "<IfModule mod_authz_core.c>\nRequire all denied\n</IfModule>\n<IfModule !mod_authz_core.c>\nOrder deny,allow\nDeny from all\n</IfModule>\n",
+		);
+		foreach ( $files as $name => $content ) {
+			if ( ! file_exists( $this->data_dir . '/' . $name ) ) {
+				@file_put_contents( $this->data_dir . '/' . $name, $content );
+			}
+		}
+	}
+
+	/**
+	 * Load the state.
+	 */
+	private function load_state() {
+		$file        = $this->data_dir . '/state.php';
+		$this->state = array();
+		if ( is_file( $file ) ) {
+			// Stored as a PHP file starting with exit(), so it can't be read over HTTP.
+			$raw  = (string) @file_get_contents( $file );
+			$json = substr( $raw, strpos( $raw, "\n" ) + 1 );
+			$data = json_decode( $json, true );
+			if ( is_array( $data ) ) {
+				$this->state = $data;
+			}
+		}
+		$this->state = array_merge(
+			array(
+				'token'    => '',
+				'status'   => 'new',
+				'step'     => '',
+				'params'   => array(),
+				'progress' => 0,
+				'message'  => '',
+				'warnings' => array(),
+				'notices'  => array(),
+				'extract'  => array(),
+				'db'       => array(),
+				'result'   => array(),
+			),
+			$this->state
+		);
+	}
+
+	/**
+	 * Save the state.
+	 */
+	private function save_state() {
+		$this->ensure_data_dir();
+		$json = json_encode( $this->state );
+		if ( false === $json ) {
+			$this->state['warnings'] = array_map( array( __CLASS__, 'utf8' ), $this->state['warnings'] );
+			$json                    = json_encode( $this->state );
+		}
+		$file = $this->data_dir . '/state.php';
+		$tmp  = $file . '.tmp';
+		$data = "<?php exit; ?>\n" . $json;
+		if ( false === @file_put_contents( $tmp, $data ) || ! @rename( $tmp, $file ) ) {
+			@file_put_contents( $file, $data );
+		}
+	}
+
+	/**
+	 * Make a string valid UTF-8.
+	 *
+	 * @param string $value Value.
+	 * @return string
+	 */
+	public static function utf8( $value ) {
+		if ( ! is_string( $value ) ) {
+			return $value;
+		}
+		if ( function_exists( 'mb_convert_encoding' ) ) {
+			return mb_convert_encoding( $value, 'UTF-8', 'UTF-8' );
+		}
+		return preg_replace( '/[\x80-\xFF]/', '?', $value );
+	}
+
+	/**
+	 * Append a line to the log.
+	 *
+	 * @param string $message Message.
+	 */
+	private function log( $message ) {
+		if ( $this->cli ) {
+			fwrite( STDOUT, '  ' . $message . "\n" );
+		}
+		if ( is_dir( $this->data_dir ) ) {
+			@file_put_contents( $this->data_dir . '/install.log', gmdate( 'Y-m-d H:i:s' ) . ' ' . $message . "\n", FILE_APPEND );
+		}
+	}
+
+	/**
+	 * Add a warning.
+	 *
+	 * @param string $message Message.
+	 */
+	private function warn( $message ) {
+		if ( count( $this->state['warnings'] ) < 200 ) {
+			$this->state['warnings'][] = $message;
+		}
+		$this->log( 'AVERTISSEMENT : ' . $message );
+	}
+
+	/**
+	 * Human readable size.
+	 *
+	 * @param float $bytes Bytes.
+	 * @return string
+	 */
+	public static function size( $bytes ) {
+		$units = array( 'o', 'Ko', 'Mo', 'Go', 'To' );
+		$i     = 0;
+		while ( $bytes >= 1024 && $i < 4 ) {
+			$bytes /= 1024;
+			$i++;
+		}
+		return round( $bytes, $i ? 1 : 0 ) . ' ' . $units[ $i ];
+	}
+
+	/**
+	 * Seconds of work per request.
+	 *
+	 * @return float
+	 */
+	private function budget() {
+		$forced = getenv( 'WPMIG_BUDGET' );
+		if ( false !== $forced && is_numeric( $forced ) ) {
+			return (float) $forced;
+		}
+		if ( $this->cli ) {
+			return 0;
+		}
+		$max = (int) ini_get( 'max_execution_time' );
+		return $max > 0 ? min( 15, max( 3, $max * 0.4 ) ) : 15;
+	}
+
+	/**
+	 * Raise PHP limits.
+	 */
+	private function raise_limits() {
+		if ( function_exists( 'set_time_limit' ) && false === strpos( (string) ini_get( 'disable_functions' ), 'set_time_limit' ) ) {
+			@set_time_limit( 0 );
+		}
+		@ignore_user_abort( true );
+		$limit = ini_get( 'memory_limit' );
+		if ( '-1' !== $limit && $this->to_bytes( $limit ) < 268435456 ) {
+			@ini_set( 'memory_limit', '256M' );
+		}
+	}
+
+	/**
+	 * php.ini size to bytes.
+	 *
+	 * @param string $value Value.
+	 * @return float
+	 */
+	private function to_bytes( $value ) {
+		$value = trim( (string) $value );
+		$num   = (float) $value;
+		switch ( strtolower( substr( $value, -1 ) ) ) {
+			case 'g':
+				$num *= 1024;
+				// Fall through.
+			case 'm':
+				$num *= 1024;
+				// Fall through.
+			case 'k':
+				$num *= 1024;
+		}
+		return $num;
+	}
+
+	/**
+	 * Recursive delete.
+	 *
+	 * @param string $dir Directory.
+	 */
+	private function rrmdir( $dir ) {
+		if ( ! is_dir( $dir ) || is_link( $dir ) ) {
+			@unlink( $dir );
+			return;
+		}
+		foreach ( (array) @scandir( $dir ) as $item ) {
+			if ( '.' === $item || '..' === $item || false === $item ) {
+				continue;
+			}
+			$this->rrmdir( $dir . '/' . $item );
+		}
+		@rmdir( $dir );
+	}
+
+	/* ------------------------------------------------------------------ */
+	/* Archive & manifest                                                  */
+	/* ------------------------------------------------------------------ */
+
+	/**
+	 * Locate the archive.
+	 *
+	 * @return string|null
+	 */
+	private function archive_path() {
+		if ( ! empty( $this->config['archive'] ) && is_file( $this->root . '/' . $this->config['archive'] ) ) {
+			return $this->root . '/' . $this->config['archive'];
+		}
+		$candidates = (array) glob( $this->root . '/*.wpmig' );
+		foreach ( $candidates as $file ) {
+			if ( ! empty( $this->config['package'] ) && false !== strpos( basename( $file ), $this->config['package'] ) ) {
+				return $file;
+			}
+		}
+		// Renamed archive: check the manifest of each candidate.
+		foreach ( $candidates as $file ) {
+			$manifest = $this->read_manifest_from( $file );
+			if ( $manifest && ( empty( $this->config['package'] ) || $manifest['package'] === $this->config['package'] ) ) {
+				return $file;
+			}
+		}
+		return null;
+	}
+
+	/**
+	 * Read the manifest (first entry) of an archive.
+	 *
+	 * @param string $file Archive.
+	 * @return array|null
+	 */
+	private function read_manifest_from( $file ) {
+		try {
+			$reader = new WPMIG_Archive_Reader( $file );
+			$entry  = $reader->next_entry();
+			if ( ! $entry || WPMIG_Archive::META_DIR . '/manifest.json' !== $entry['path'] ) {
+				return null;
+			}
+			$data = json_decode( $reader->read_all_blocks(), true );
+			$reader->close();
+			return is_array( $data ) ? $data : null;
+		} catch ( Exception $e ) {
+			return null;
+		}
+	}
+
+	/**
+	 * Package manifest.
+	 *
+	 * @return array
+	 * @throws WPMIG_Exception When the archive is missing.
+	 */
+	private function manifest() {
+		if ( null !== $this->manifest ) {
+			return $this->manifest;
+		}
+		$cache = $this->data_dir . '/manifest.php';
+		if ( is_file( $cache ) ) {
+			$raw  = (string) @file_get_contents( $cache );
+			$data = json_decode( substr( $raw, strpos( $raw, "\n" ) + 1 ), true );
+			if ( is_array( $data ) ) {
+				$this->manifest = $data;
+				return $data;
+			}
+		}
+		$archive = $this->archive_path();
+		if ( ! $archive ) {
+			throw new WPMIG_Exception( 'Archive introuvable. Déposez le fichier ' . ( isset( $this->config['archive'] ) ? $this->config['archive'] : '*.wpmig' ) . ' dans le même dossier que l\'installeur.' );
+		}
+		$data = $this->read_manifest_from( $archive );
+		if ( ! $data ) {
+			throw new WPMIG_Exception( 'L\'archive ' . basename( $archive ) . ' est illisible ou corrompue.' );
+		}
+		$this->manifest = $data;
+		if ( is_dir( $this->data_dir ) ) {
+			@file_put_contents( $cache, "<?php exit; ?>\n" . json_encode( $data ) );
+		}
+		return $data;
+	}
+
+	/* ------------------------------------------------------------------ */
+	/* Environment                                                         */
+	/* ------------------------------------------------------------------ */
+
+	/**
+	 * URL of the installation directory, detected from the request.
+	 *
+	 * @return string
+	 */
+	private function detect_url() {
+		if ( $this->cli || empty( $_SERVER['HTTP_HOST'] ) ) {
+			return '';
+		}
+		$https = ( ! empty( $_SERVER['HTTPS'] ) && 'off' !== strtolower( $_SERVER['HTTPS'] ) )
+			|| ( isset( $_SERVER['SERVER_PORT'] ) && '443' === (string) $_SERVER['SERVER_PORT'] )
+			|| ( isset( $_SERVER['HTTP_X_FORWARDED_PROTO'] ) && 'https' === strtolower( $_SERVER['HTTP_X_FORWARDED_PROTO'] ) )
+			|| ( isset( $_SERVER['HTTP_X_FORWARDED_SSL'] ) && 'on' === strtolower( $_SERVER['HTTP_X_FORWARDED_SSL'] ) )
+			|| ( isset( $_SERVER['HTTP_CF_VISITOR'] ) && false !== strpos( $_SERVER['HTTP_CF_VISITOR'], 'https' ) );
+		$host  = preg_replace( '/[^A-Za-z0-9.\-:\[\]]/', '', $_SERVER['HTTP_HOST'] );
+		$path  = isset( $_SERVER['SCRIPT_NAME'] ) ? dirname( str_replace( '\\', '/', $_SERVER['SCRIPT_NAME'] ) ) : '';
+		$path  = rtrim( str_replace( '\\', '/', $path ), '/.' );
+		return ( $https ? 'https' : 'http' ) . '://' . $host . $path;
+	}
+
+	/**
+	 * DB settings of an existing wp-config.php in the target directory.
+	 *
+	 * @return array
+	 */
+	private function existing_config() {
+		$file = $this->root . '/wp-config.php';
+		if ( ! is_file( $file ) ) {
+			return array();
+		}
+		$editor = new WPMIG_Config_Editor( (string) @file_get_contents( $file ) );
+		$out    = array();
+		foreach ( array( 'DB_NAME' => 'db_name', 'DB_USER' => 'db_user', 'DB_PASSWORD' => 'db_pass', 'DB_HOST' => 'db_host' ) as $const => $key ) {
+			$value = $editor->get_define( $const );
+			if ( null !== $value ) {
+				$out[ $key ] = $value;
+			}
+		}
+		$prefix = $editor->get_prefix();
+		if ( null !== $prefix ) {
+			$out['db_prefix'] = $prefix;
+		}
+		return $out;
+	}
+
+	/**
+	 * PHP version known to be supported by a WordPress version.
+	 *
+	 * @param string $wp WordPress version.
+	 * @return string
+	 */
+	private function max_php_for_wp( $wp ) {
+		$map = array(
+			'6.7' => '8.4',
+			'6.4' => '8.3',
+			'6.3' => '8.2',
+			'5.9' => '8.1',
+			'5.6' => '8.0',
+			'5.3' => '7.4',
+			'5.0' => '7.3',
+			'4.9' => '7.2',
+		);
+		foreach ( $map as $wp_min => $php ) {
+			if ( version_compare( $wp, $wp_min, '>=' ) ) {
+				return version_compare( $wp, '6.7', '>=' ) ? '99' : $php;
+			}
+		}
+		return '7.1';
+	}
+
+	/**
+	 * System checks.
+	 *
+	 * @return array
+	 */
+	private function checks() {
+		$checks = array();
+		$add    = function ( $label, $value, $status ) use ( &$checks ) {
+			$checks[] = array(
+				'label'  => $label,
+				'value'  => $value,
+				'status' => $status,
+			);
+		};
+		$manifest = null;
+		try {
+			$manifest = $this->manifest();
+		} catch ( Exception $e ) {
+			$add( 'Archive', $e->getMessage(), 'error' );
+		}
+		$archive = $this->archive_path();
+		if ( $archive ) {
+			$trailer = WPMIG_Archive::read_trailer( $archive );
+			if ( ! $trailer ) {
+				$add( 'Archive', 'Archive incomplète : le transfert a probablement été interrompu. Renvoyez le fichier (en mode binaire si vous utilisez FTP).', 'error' );
+			} else {
+				$add( 'Archive', basename( $archive ) . ' — ' . self::size( filesize( $archive ) ) . ', ' . $trailer['files'] . ' fichiers', 'ok' );
+			}
+			if ( PHP_INT_SIZE < 8 && filesize( $archive ) > 2000000000 ) {
+				$add( 'PHP 32 bits', 'Ce serveur ne peut pas lire une archive de plus de 2 Go.', 'error' );
+			}
+		}
+
+		$required = $manifest ? $manifest['site']['required_php'] : '5.6';
+		$status   = version_compare( PHP_VERSION, $required, '>=' ) ? 'ok' : 'error';
+		$value    = PHP_VERSION . ( 'ok' === $status ? '' : ' — WordPress ' . $manifest['site']['wp_version'] . ' exige PHP ' . $required . ' minimum.' );
+		if ( $manifest && 'ok' === $status ) {
+			$max = $this->max_php_for_wp( $manifest['site']['wp_version'] );
+			if ( version_compare( PHP_MAJOR_VERSION . '.' . PHP_MINOR_VERSION, $max, '>' ) ) {
+				$status = 'warning';
+				$value .= ' — plus récent que la version de PHP prise en charge par WordPress ' . $manifest['site']['wp_version'] . ' (' . $max . ') : mettez WordPress à jour après la migration.';
+			}
+			if ( version_compare( PHP_VERSION, '7.0', '<' ) && version_compare( $manifest['site']['php_version'], '7.0', '>=' ) ) {
+				$status = 'warning';
+				$value .= ' — le site d\'origine utilisait PHP ' . $manifest['site']['php_version'] . '.';
+			}
+		}
+		$add( 'Version de PHP', $value, $status );
+
+		$add( 'Extension mysqli', extension_loaded( 'mysqli' ) ? 'disponible' : 'absente (obligatoire)', extension_loaded( 'mysqli' ) ? 'ok' : 'error' );
+		$add( 'Extension zlib', function_exists( 'gzinflate' ) ? 'disponible' : 'absente (obligatoire pour décompresser l\'archive)', function_exists( 'gzinflate' ) ? 'ok' : 'error' );
+		$add( 'Extension json', function_exists( 'json_decode' ) ? 'disponible' : 'absente', function_exists( 'json_decode' ) ? 'ok' : 'error' );
+		$missing = array();
+		foreach ( array( 'mbstring', 'curl', 'openssl', 'xml', 'zip' ) as $ext ) {
+			if ( ! extension_loaded( $ext ) ) {
+				$missing[] = $ext;
+			}
+		}
+		if ( ! extension_loaded( 'gd' ) && ! extension_loaded( 'imagick' ) ) {
+			$missing[] = 'gd/imagick';
+		}
+		$add( 'Extensions recommandées', $missing ? 'manquantes : ' . implode( ', ', $missing ) : 'toutes présentes', $missing ? 'warning' : 'ok' );
+
+		$writable = is_writable( $this->root );
+		$add( 'Dossier d\'installation', $this->root . ( $writable ? ' (accessible en écriture)' : ' — NON accessible en écriture' ), $writable ? 'ok' : 'error' );
+
+		if ( $manifest ) {
+			$needed = ( $manifest['db_only'] ? 0 : $manifest['stats']['size'] ) + ( $archive ? filesize( $archive ) * 0.3 : 0 );
+			$free   = function_exists( 'disk_free_space' ) ? @disk_free_space( $this->root ) : false;
+			if ( false !== $free ) {
+				$add( 'Espace disque', self::size( $free ) . ' libres (besoin estimé : ' . self::size( $needed ) . ')', $free < $needed ? 'error' : 'ok' );
+			}
+		}
+		if ( is_file( $this->root . '/wp-config.php' ) || is_file( $this->root . '/wp-settings.php' ) ) {
+			$add( 'WordPress existant', 'Un WordPress est déjà présent dans ce dossier : ses fichiers seront écrasés (wp-config.php et .htaccess sont sauvegardés).', 'warning' );
+		}
+		$mem = ini_get( 'memory_limit' );
+		$add( 'memory_limit', $mem, ( '-1' !== $mem && $this->to_bytes( $mem ) < 67108864 ) ? 'warning' : 'ok' );
+		$max = (int) ini_get( 'max_execution_time' );
+		$add( 'max_execution_time', $max ? $max . ' s (traitement découpé en étapes courtes)' : 'illimité', 'ok' );
+		$server = isset( $_SERVER['SERVER_SOFTWARE'] ) ? $_SERVER['SERVER_SOFTWARE'] : '';
+		if ( false !== stripos( $server, 'nginx' ) ) {
+			$add( 'Serveur web', 'nginx : les fichiers .htaccess sont ignorés. Pour les permaliens, la configuration doit contenir « try_files $uri $uri/ /index.php?$args; ».', 'warning' );
+		} elseif ( $server ) {
+			$add( 'Serveur web', $server, 'ok' );
+		}
+		return $checks;
+	}
+
+	/**
+	 * Blocking errors in checks.
+	 *
+	 * @param array $checks Checks.
+	 * @return bool
+	 */
+	private function has_blocking( array $checks ) {
+		foreach ( $checks as $c ) {
+			if ( 'error' === $c['status'] ) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/* ------------------------------------------------------------------ */
+	/* Database                                                            */
+	/* ------------------------------------------------------------------ */
+
+	/**
+	 * Connect to MySQL.
+	 *
+	 * @param array $p         Parameters.
+	 * @param bool  $select_db Select the database.
+	 * @return mysqli
+	 * @throws WPMIG_Exception With a user friendly message.
+	 */
+	private function connect( array $p, $select_db = true ) {
+		if ( ! class_exists( 'mysqli' ) ) {
+			throw new WPMIG_Exception( 'L\'extension PHP mysqli est requise.' );
+		}
+		if ( function_exists( 'mysqli_report' ) ) {
+			mysqli_report( MYSQLI_REPORT_OFF );
+		}
+		$host   = trim( $p['db_host'] );
+		$port   = null;
+		$socket = null;
+		// Same syntaxes as WordPress: host, host:port, host:/path/to/socket, [ipv6]:port.
+		if ( preg_match( '/^(\[[^\]]+\]|[^:]*)(?::(\d+))?(?::(\/.*))?$/', $host, $m ) ) {
+			$host = trim( $m[1], '[]' );
+			if ( ! empty( $m[2] ) ) {
+				$port = (int) $m[2];
+			}
+			if ( ! empty( $m[3] ) ) {
+				$socket = $m[3];
+			}
+		}
+		if ( preg_match( '/^([^:]*):(\/.+)$/', trim( $p['db_host'] ), $m ) ) {
+			$host   = $m[1];
+			$socket = $m[2];
+		}
+		if ( '' === $host ) {
+			$host = 'localhost';
+		}
+		$db = mysqli_init();
+		if ( ! $db ) {
+			throw new WPMIG_Exception( 'Initialisation de mysqli impossible.' );
+		}
+		@$db->options( MYSQLI_OPT_CONNECT_TIMEOUT, 10 );
+		$ok = false;
+		try {
+			$ok = @$db->real_connect( $host, $p['db_user'], $p['db_pass'], $select_db ? $p['db_name'] : null, $port, $socket );
+		} catch ( Exception $e ) {
+			$ok = false;
+		}
+		if ( ! $ok ) {
+			$errno = $db->connect_errno ? $db->connect_errno : mysqli_connect_errno();
+			$error = $db->connect_error ? $db->connect_error : mysqli_connect_error();
+			switch ( (int) $errno ) {
+				case 1045:
+					$msg = 'Accès refusé : identifiant ou mot de passe MySQL incorrect.';
+					break;
+				case 1044:
+					$msg = 'L\'utilisateur « ' . $p['db_user'] . ' » n\'a pas accès à la base « ' . $p['db_name'] . ' ».';
+					break;
+				case 1049:
+					$msg = 'La base de données « ' . $p['db_name'] . ' » n\'existe pas. Créez-la depuis le panneau de votre hébergeur (ou cochez « Créer la base »).';
+					break;
+				case 2002:
+				case 2003:
+				case 2005:
+					$msg = 'Serveur MySQL injoignable (« ' . $p['db_host'] . ' »). Vérifiez l\'hôte indiqué par votre hébergeur (souvent « localhost »).';
+					break;
+				default:
+					$msg = 'Connexion MySQL impossible : ' . $error;
+			}
+			$e = new WPMIG_Exception( $msg, (int) $errno );
+			throw $e;
+		}
+		return $db;
+	}
+
+	/**
+	 * Connect, creating the database if requested.
+	 *
+	 * @param array $p Parameters.
+	 * @return mysqli
+	 * @throws WPMIG_Exception On error.
+	 */
+	private function connect_or_create( array $p ) {
+		try {
+			return $this->connect( $p );
+		} catch ( WPMIG_Exception $e ) {
+			if ( 1049 !== $e->getCode() || empty( $p['db_create'] ) ) {
+				throw $e;
+			}
+		}
+		$db = $this->connect( $p, false );
+		if ( ! $db->query( 'CREATE DATABASE IF NOT EXISTS ' . WPMIG_SQL::quote_id( $p['db_name'] ) . ' DEFAULT CHARACTER SET utf8mb4' ) && ! $db->query( 'CREATE DATABASE IF NOT EXISTS ' . WPMIG_SQL::quote_id( $p['db_name'] ) ) ) {
+			throw new WPMIG_Exception( 'Impossible de créer la base « ' . $p['db_name'] . ' » : ' . $db->error . '. Créez-la depuis le panneau de votre hébergeur.' );
+		}
+		if ( ! $db->select_db( $p['db_name'] ) ) {
+			throw new WPMIG_Exception( 'Base créée mais inaccessible : ' . $db->error );
+		}
+		$this->log( 'Base de données « ' . $p['db_name'] . ' » créée.' );
+		return $db;
+	}
+
+	/**
+	 * List the tables of the database.
+	 *
+	 * @param mysqli $db Connection.
+	 * @return array name => type.
+	 */
+	private function list_tables( $db ) {
+		$tables = array();
+		$res    = $db->query( 'SHOW FULL TABLES' );
+		if ( $res ) {
+			while ( $row = $res->fetch_row() ) {
+				$tables[ $row[0] ] = isset( $row[1] ) ? strtoupper( $row[1] ) : 'BASE TABLE';
+			}
+		}
+		return $tables;
+	}
+
+	/**
+	 * Test the database settings.
+	 *
+	 * @param array $p Parameters.
+	 * @return array
+	 */
+	private function test_db( array $p ) {
+		$result = array(
+			'ok'       => false,
+			'messages' => array(),
+		);
+		try {
+			$p  = $this->sanitize_params( $p, false );
+			$db = $this->connect_or_create( $p );
+		} catch ( Exception $e ) {
+			$result['messages'][] = array( 'error', $e->getMessage() );
+			return $result;
+		}
+		$manifest = $this->manifest();
+		$importer = new WPMIG_DB_Importer( $db, array() );
+		$server   = $importer->get_server();
+		$result['messages'][] = array( 'ok', 'Connexion réussie — ' . $server['version'] );
+
+		$required = isset( $manifest['site']['required_mysql'] ) ? $manifest['site']['required_mysql'] : '5.0';
+		if ( ! $server['mariadb'] && version_compare( preg_replace( '/[^0-9.].*$/', '', $server['version'] ), $required, '<' ) ) {
+			$result['messages'][] = array( 'warning', 'MySQL ' . $server['version'] . ' est plus ancien que la version requise par WordPress (' . $required . ').' );
+		}
+		if ( empty( $server['charsets']['utf8mb4'] ) ) {
+			$result['messages'][] = array( 'warning', 'Le serveur ne gère pas utf8mb4 : les émojis et certains caractères seront perdus.' );
+		}
+		if ( $server['max_packet'] < 1048576 ) {
+			$result['messages'][] = array( 'warning', 'max_allowed_packet très faible (' . self::size( $server['max_packet'] ) . ') : les requêtes seront découpées.' );
+		}
+
+		// Privileges.
+		$test = 'wpmig_test_' . self::random_string( 6, true );
+		if ( ! $db->query( 'CREATE TABLE ' . WPMIG_SQL::quote_id( $test ) . ' (id INT NOT NULL PRIMARY KEY) ' ) ) {
+			$result['messages'][] = array( 'error', 'Droits insuffisants : impossible de créer une table (' . $db->error . ').' );
+			return $result;
+		}
+		$rename_ok = $db->query( 'RENAME TABLE ' . WPMIG_SQL::quote_id( $test ) . ' TO ' . WPMIG_SQL::quote_id( $test . 'b' ) );
+		$db->query( 'DROP TABLE IF EXISTS ' . WPMIG_SQL::quote_id( $test ) );
+		$db->query( 'DROP TABLE IF EXISTS ' . WPMIG_SQL::quote_id( $test . 'b' ) );
+		if ( ! $rename_ok ) {
+			$result['messages'][] = array( 'error', 'Droits insuffisants : impossible de renommer une table (ALTER / DROP requis).' );
+			return $result;
+		}
+
+		$tables   = $this->list_tables( $db );
+		$same     = 0;
+		foreach ( $tables as $name => $type ) {
+			if ( 0 === strpos( $name, $p['db_prefix'] ) ) {
+				$same++;
+			}
+		}
+		if ( 'empty' === $p['db_action'] && $tables ) {
+			$result['messages'][] = array( 'warning', 'La base contient ' . count( $tables ) . ' table(s) : elles seront TOUTES supprimées.' );
+		} elseif ( $same ) {
+			$result['messages'][] = array( 'warning', $same . ' table(s) avec le préfixe « ' . $p['db_prefix'] . ' » existent déjà : celles du site importé les remplaceront.' );
+		} else {
+			$result['messages'][] = array( 'ok', 'Aucune table existante avec le préfixe « ' . $p['db_prefix'] . ' ».' );
+		}
+		foreach ( $manifest['tables'] as $t ) {
+			$suffix = substr( $t['name'], strlen( $manifest['site']['table_prefix'] ) );
+			if ( strlen( $p['db_prefix'] . $suffix ) > 64 ) {
+				$result['messages'][] = array( 'error', 'Préfixe trop long : le nom de table « ' . $p['db_prefix'] . $suffix . ' » dépasse 64 caractères.' );
+				return $result;
+			}
+		}
+		$result['ok'] = true;
+		return $result;
+	}
+
+	/* ------------------------------------------------------------------ */
+	/* Parameters                                                          */
+	/* ------------------------------------------------------------------ */
+
+	/**
+	 * Validate the installation parameters.
+	 *
+	 * @param array $in   Raw parameters.
+	 * @param bool  $full Validate everything (not only the DB part).
+	 * @return array
+	 * @throws WPMIG_Exception On invalid input.
+	 */
+	private function sanitize_params( array $in, $full = true ) {
+		$manifest = $this->manifest();
+		$get      = function ( $key, $default = '' ) use ( $in ) {
+			return isset( $in[ $key ] ) && ! is_array( $in[ $key ] ) ? trim( (string) $in[ $key ] ) : $default;
+		};
+		$bool     = function ( $key ) use ( $in ) {
+			return isset( $in[ $key ] ) && in_array( (string) $in[ $key ], array( '1', 'true', 'on', 'yes' ), true );
+		};
+		$p = array(
+			'db_host'   => $get( 'db_host', 'localhost' ),
+			'db_name'   => $get( 'db_name' ),
+			'db_user'   => $get( 'db_user' ),
+			'db_pass'   => isset( $in['db_pass'] ) ? (string) $in['db_pass'] : '',
+			'db_prefix' => $get( 'db_prefix', $manifest['site']['table_prefix'] ),
+			'db_action' => 'empty' === $get( 'db_action' ) ? 'empty' : 'replace',
+			'db_create' => $bool( 'db_create' ),
+		);
+		if ( '' === $p['db_name'] || '' === $p['db_user'] ) {
+			throw new WPMIG_Exception( 'Indiquez le nom de la base de données et l\'utilisateur MySQL.' );
+		}
+		if ( ! preg_match( '/^[A-Za-z0-9_]+$/', $p['db_prefix'] ) ) {
+			throw new WPMIG_Exception( 'Préfixe de table invalide : lettres, chiffres et « _ » uniquement.' );
+		}
+		if ( ! $full ) {
+			return $p;
+		}
+		$p['url_site'] = rtrim( $get( 'url_site', $this->detect_url() ), '/' );
+		$p['url_home'] = rtrim( $get( 'url_home', $p['url_site'] ), '/' );
+		foreach ( array( 'url_site', 'url_home' ) as $key ) {
+			if ( ! preg_match( '#^https?://[^/\s]+(/[^\s]*)?$#i', $p[ $key ] ) ) {
+				throw new WPMIG_Exception( 'URL invalide : « ' . $p[ $key ] . ' » (exemple : https://www.exemple.fr).' );
+			}
+		}
+		$p['skip_files']  = $bool( 'skip_files' ) || ! empty( $manifest['db_only'] );
+		$p['new_salts']   = $bool( 'new_salts' );
+		$p['keep_guid']   = $bool( 'keep_guid' );
+		$p['admin_user']  = $get( 'admin_user' );
+		$p['admin_pass']  = isset( $in['admin_pass'] ) ? (string) $in['admin_pass'] : '';
+		$p['admin_email'] = $get( 'admin_email' );
+		if ( '' !== $p['admin_user'] ) {
+			if ( ! preg_match( '/^[A-Za-z0-9_.@\- ]{1,60}$/', $p['admin_user'] ) ) {
+				throw new WPMIG_Exception( 'Identifiant administrateur invalide.' );
+			}
+			if ( strlen( $p['admin_pass'] ) < 8 ) {
+				throw new WPMIG_Exception( 'Le mot de passe administrateur doit contenir au moins 8 caractères.' );
+			}
+			if ( '' !== $p['admin_email'] && ! filter_var( $p['admin_email'], FILTER_VALIDATE_EMAIL ) ) {
+				throw new WPMIG_Exception( 'Adresse e-mail administrateur invalide.' );
+			}
+		}
+		$p['extra'] = array();
+		foreach ( preg_split( '/\r\n|\r|\n/', $get( 'extra_replace' ) ) as $line ) {
+			$parts = explode( '=>', $line, 2 );
+			if ( 2 === count( $parts ) && strlen( trim( $parts[0] ) ) >= 3 ) {
+				$p['extra'][ trim( $parts[0] ) ] = trim( $parts[1] );
+			}
+		}
+		return $p;
+	}
+
+	/**
+	 * Search & replace pairs (old => new).
+	 *
+	 * @return array
+	 */
+	private function replacement_pairs() {
+		$m     = $this->manifest();
+		$p     = $this->state['params'];
+		$site  = $m['site'];
+		$pairs = array();
+
+		$pairs += WPMIG_Replacer::build_url_pairs( $site['siteurl'], $p['url_site'] );
+		$pairs += WPMIG_Replacer::build_url_pairs( $site['home'], $p['url_home'] );
+		if ( ! empty( $site['content_relocated'] ) || 0 !== strpos( $site['content_url'] . '/', $site['siteurl'] . '/' ) ) {
+			$pairs += WPMIG_Replacer::build_url_pairs( $site['content_url'], $p['url_site'] . '/wp-content' );
+		}
+		$pairs += WPMIG_Replacer::build_path_pairs( $site['abspath'], $this->root );
+		if ( ! empty( $site['content_relocated'] ) ) {
+			$pairs += WPMIG_Replacer::build_path_pairs( $site['content_dir'], $this->root . '/wp-content' );
+		}
+		foreach ( $p['extra'] as $old => $new ) {
+			$pairs[ $old ] = $new;
+		}
+		return $pairs;
+	}
+
+	/* ------------------------------------------------------------------ */
+	/* Installation steps                                                  */
+	/* ------------------------------------------------------------------ */
+
+	/**
+	 * Start an installation.
+	 *
+	 * @param array $in Raw parameters.
+	 * @throws WPMIG_Exception On invalid parameters.
+	 */
+	private function start( array $in ) {
+		if ( 'running' === $this->state['status'] || 'complete' === $this->state['status'] ) {
+			throw new WPMIG_Exception( 'Une installation est déjà en cours ou terminée.' );
+		}
+		$checks = $this->checks();
+		if ( $this->has_blocking( $checks ) ) {
+			throw new WPMIG_Exception( 'Des vérifications bloquantes ont échoué : corrigez-les avant de lancer l\'installation.' );
+		}
+		$params = $this->sanitize_params( $in );
+		$test   = $this->test_db( $in );
+		if ( ! $test['ok'] ) {
+			$last = end( $test['messages'] );
+			throw new WPMIG_Exception( $last[1] );
+		}
+		$this->state['params']   = $params;
+		$this->state['status']   = 'running';
+		$this->state['step']     = 'extract';
+		$this->state['started']  = time();
+		$this->state['progress'] = 0;
+		$this->state['message']  = 'Extraction de l\'archive…';
+		$this->state['tmp_prefix'] = 'wpmt' . self::random_string( 4, true ) . '_';
+		$this->log( 'Installation démarrée : ' . $this->manifest['site']['home'] . ' → ' . $params['url_home'] );
+		$this->save_state();
+	}
+
+	/**
+	 * Run the installation for one time slice.
+	 *
+	 * @return array Public state.
+	 */
+	private function step() {
+		$budget   = $this->budget();
+		$deadline = $budget ? microtime( true ) + $budget : 0;
+		$this->raise_limits();
+		while ( 'running' === $this->state['status'] ) {
+			switch ( $this->state['step'] ) {
+				case 'extract':
+					if ( $this->step_extract( $deadline ) ) {
+						$this->state['step']    = 'database';
+						$this->state['message'] = 'Import de la base de données…';
+					}
+					break;
+				case 'database':
+					if ( $this->step_database( $deadline ) ) {
+						$this->state['step']    = 'db_fix';
+						$this->state['message'] = 'Mise à jour des réglages…';
+					}
+					break;
+				case 'db_fix':
+					$this->step_db_fix();
+					$this->state['step']     = 'config';
+					$this->state['progress'] = 92;
+					$this->state['message']  = 'Écriture de wp-config.php…';
+					break;
+				case 'config':
+					$this->step_config();
+					$this->state['step']     = 'swap';
+					$this->state['progress'] = 95;
+					$this->state['message']  = 'Activation des nouvelles tables…';
+					break;
+				case 'swap':
+					$this->step_swap();
+					$this->state['step']     = 'finalize';
+					$this->state['progress'] = 98;
+					$this->state['message']  = 'Finalisation…';
+					break;
+				case 'finalize':
+					$this->step_finalize();
+					break;
+				default:
+					throw new WPMIG_Exception( 'Étape inconnue.' );
+			}
+			$this->save_state();
+			if ( $deadline && microtime( true ) >= $deadline ) {
+				break;
+			}
+		}
+		return $this->public_state();
+	}
+
+	/**
+	 * Extraction step.
+	 *
+	 * @param float $deadline Microtime or 0.
+	 * @return bool Finished.
+	 * @throws WPMIG_Exception On error.
+	 */
+	private function step_extract( $deadline ) {
+		$st = &$this->state['extract'];
+		if ( empty( $st ) ) {
+			$st = array(
+				'offset' => 0,
+				'cur'    => null,
+				'files'  => 0,
+				'bytes'  => 0,
+				'failed' => 0,
+			);
+		}
+		$archive = $this->archive_path();
+		if ( ! $archive ) {
+			throw new WPMIG_Exception( 'Archive introuvable.' );
+		}
+		$size       = max( 1, filesize( $archive ) );
+		$reader     = new WPMIG_Archive_Reader( $archive, $st['offset'] );
+		$skip_files = ! empty( $this->state['params']['skip_files'] );
+		$self_names = array( basename( $this->file ) => true, basename( $archive ) => true, basename( $this->data_dir ) => true );
+		$renamed    = array( '.htaccess' => true, '.user.ini' => true, 'php.ini' => true, 'wp-config.php' => true );
+		$last_save  = microtime( true );
+
+		while ( true ) {
+			if ( $deadline && microtime( true ) >= $deadline ) {
+				break;
+			}
+			if ( null === $st['cur'] ) {
+				$entry = $reader->next_entry();
+				if ( null === $entry ) {
+					$reader->close();
+					$this->log( 'Extraction terminée : ' . $st['files'] . ' fichiers.' );
+					if ( $st['failed'] ) {
+						$this->warn( $st['failed'] . ' fichier(s) n\'ont pas pu être écrits (permissions ?). Voir install.log.' );
+					}
+					return true;
+				}
+				$path = $entry['path'];
+				$dest = null;
+				if ( WPMIG_Archive::META_DIR . '/database.sql' === $path ) {
+					$dest = $this->data_dir . '/database.sql';
+				} elseif ( 0 === strpos( $path, WPMIG_Archive::META_DIR . '/' ) ) {
+					$dest = null;
+				} elseif ( $skip_files ) {
+					if ( ! empty( $this->state['db']['sql_extracted'] ) ) {
+						// The dump is the second entry: nothing else to extract.
+						$reader->close();
+						return true;
+					}
+					$dest = null;
+				} elseif ( ! WPMIG_Archive::is_safe_path( $path ) ) {
+					$this->warn( 'Chemin dangereux ignoré dans l\'archive : ' . $path );
+					$dest = null;
+				} else {
+					$is_root = false === strpos( $path, '/' );
+					if ( $is_root && isset( $self_names[ $path ] ) ) {
+						$dest = null;
+					} elseif ( $is_root && isset( $renamed[ $path ] ) && 'f' === $entry['type'] ) {
+						// Server specific files of the old host (PHP handlers, auto_prepend_file...) are
+						// kept aside: they are a classic cause of "500 Internal Server Error" after a move.
+						$dest = $this->root . '/' . $path . '.wpmig-source';
+						$this->state['notices'][] = $path . ' d\'origine conservé sous le nom ' . $path . '.wpmig-source';
+					} else {
+						$dest = $this->root . '/' . $path;
+					}
+				}
+				if ( 'd' === $entry['type'] ) {
+					if ( null !== $dest && ! is_dir( $dest ) && ! @mkdir( $dest, 0755, true ) ) {
+						$this->log( 'Dossier non créé : ' . $path );
+						$st['failed']++;
+					}
+					$st['offset'] = $reader->tell();
+					continue;
+				}
+				$st['cur'] = array(
+					'dest'    => $dest,
+					'path'    => $path,
+					'written' => 0,
+					'mtime'   => $entry['mtime'],
+				);
+				if ( null !== $dest ) {
+					$dir = dirname( $dest );
+					if ( ! is_dir( $dir ) ) {
+						@mkdir( $dir, 0755, true );
+					}
+					if ( is_dir( $dest ) || false === @file_put_contents( $dest, '' ) ) {
+						$this->log( 'Écriture impossible : ' . $path );
+						$st['failed']++;
+						$st['cur']['dest'] = null;
+					}
+				}
+			}
+
+			// Copy the blocks of the current entry.
+			$cur = &$st['cur'];
+			$fh  = null;
+			if ( null !== $cur['dest'] ) {
+				$fh = @fopen( $cur['dest'], 'c+b' );
+				if ( ! $fh ) {
+					$this->log( 'Écriture impossible : ' . $cur['path'] );
+					$st['failed']++;
+					$cur['dest'] = null;
+				} else {
+					ftruncate( $fh, $cur['written'] );
+					fseek( $fh, 0, SEEK_END );
+				}
+			}
+			$finished = false;
+			while ( true ) {
+				$block = $reader->next_block();
+				if ( false === $block ) {
+					$finished = true;
+					break;
+				}
+				if ( $fh ) {
+					if ( false === fwrite( $fh, $block ) ) {
+						fclose( $fh );
+						throw new WPMIG_Exception( 'Erreur d\'écriture de ' . $cur['path'] . ' (espace disque insuffisant ?).' );
+					}
+					$cur['written'] += strlen( $block );
+				}
+				$st['bytes'] += strlen( $block );
+				$st['offset'] = $reader->tell();
+				if ( $deadline && microtime( true ) >= $deadline ) {
+					break;
+				}
+			}
+			if ( $fh ) {
+				fclose( $fh );
+			}
+			$st['offset'] = $reader->tell();
+			if ( $finished ) {
+				if ( null !== $cur['dest'] ) {
+					if ( $cur['mtime'] ) {
+						@touch( $cur['dest'], $cur['mtime'] );
+					}
+					if ( $this->data_dir . '/database.sql' === $cur['dest'] ) {
+						$this->state['db']['sql_extracted'] = true;
+					} else {
+						$st['files']++;
+					}
+				}
+				unset( $cur );
+				$st['cur'] = null;
+			} else {
+				unset( $cur );
+			}
+			$this->state['progress'] = (int) ( 45 * $st['offset'] / $size );
+			$this->state['message']  = 'Extraction de l\'archive… ' . $st['files'] . ' fichiers (' . self::size( $st['bytes'] ) . ')';
+			if ( microtime( true ) - $last_save > 2 ) {
+				$this->save_state();
+				$last_save = microtime( true );
+			}
+		}
+		$reader->close();
+		return false;
+	}
+
+	/**
+	 * Source table => temporary table.
+	 *
+	 * @return array
+	 */
+	private function table_map() {
+		$m      = $this->manifest();
+		$prefix = $m['site']['table_prefix'];
+		$map    = array();
+		foreach ( $m['tables'] as $t ) {
+			$map[ $t['name'] ] = $this->state['tmp_prefix'] . substr( $t['name'], strlen( $prefix ) );
+		}
+		return $map;
+	}
+
+	/**
+	 * Database import step.
+	 *
+	 * @param float $deadline Microtime or 0.
+	 * @return bool Finished.
+	 * @throws WPMIG_Exception On error.
+	 */
+	private function step_database( $deadline ) {
+		$m    = $this->manifest();
+		$p    = $this->state['params'];
+		$st   = &$this->state['db'];
+		$file = $this->data_dir . '/database.sql';
+		if ( ! is_file( $file ) ) {
+			throw new WPMIG_Exception( 'Le fichier SQL n\'a pas été extrait de l\'archive.' );
+		}
+		if ( ! isset( $st['offset'] ) ) {
+			$st['offset']  = 0;
+			$st['errors']  = 0;
+			$st['queries'] = 0;
+			$this->log( 'Import SQL (préfixe temporaire ' . $this->state['tmp_prefix'] . ').' );
+			$pairs = $this->replacement_pairs();
+			foreach ( $pairs as $old => $new ) {
+				if ( false === strpos( $old, '\\' ) && false === strpos( $old, '%' ) ) {
+					$this->log( 'Remplacement : ' . $old . ' → ' . $new );
+				}
+			}
+		}
+		$db       = $this->connect( $p );
+		$replacer = new WPMIG_Replacer( $this->replacement_pairs() );
+		$skip     = array();
+		if ( ! empty( $p['keep_guid'] ) ) {
+			$skip[ $m['site']['table_prefix'] . 'posts' ] = array( 'guid' );
+		}
+		$importer = new WPMIG_DB_Importer( $db, $this->table_map(), $replacer, $skip );
+		$importer->init_session( $m['site']['db_charset'] );
+		$res = $importer->import( $file, $st['offset'], $deadline );
+
+		$st['offset']   = $res['offset'];
+		$st['errors']  += $importer->error_count;
+		$st['queries'] += $importer->query_count;
+		foreach ( $importer->errors as $error ) {
+			$this->log( 'Erreur SQL : ' . $error );
+			if ( count( $this->state['warnings'] ) < 30 ) {
+				$this->state['warnings'][] = 'Erreur SQL : ' . $error;
+			}
+		}
+		foreach ( $importer->notices as $notice ) {
+			if ( ! in_array( $notice, $this->state['notices'], true ) ) {
+				$this->state['notices'][] = $notice;
+			}
+		}
+		if ( $replacer->broken_serialized ) {
+			$st['broken'] = ( isset( $st['broken'] ) ? $st['broken'] : 0 ) + $replacer->broken_serialized;
+		}
+		$this->state['progress'] = 45 + (int) ( 45 * $res['offset'] / max( 1, $res['size'] ) );
+		$this->state['message']  = 'Import de la base de données… ' . self::size( $res['offset'] ) . ' / ' . self::size( $res['size'] );
+		$db->close();
+		if ( $res['done'] ) {
+			$this->log( 'Import SQL terminé : ' . $st['queries'] . ' requêtes, ' . $st['errors'] . ' erreur(s).' );
+			if ( ! empty( $st['broken'] ) ) {
+				$this->log( $st['broken'] . ' valeur(s) sérialisée(s) déjà corrompue(s) dans la source : remplacement simple appliqué.' );
+			}
+		}
+		return $res['done'];
+	}
+
+	/**
+	 * Fix settings in the imported (temporary) tables.
+	 *
+	 * @throws WPMIG_Exception On error.
+	 */
+	private function step_db_fix() {
+		$m      = $this->manifest();
+		$p      = $this->state['params'];
+		$db     = $this->connect( $p );
+		$tmp    = $this->state['tmp_prefix'];
+		$old    = $m['site']['table_prefix'];
+		$new    = $p['db_prefix'];
+		$tables = $this->list_tables( $db );
+		$db->set_charset( 'utf8mb4' ) || $db->set_charset( 'utf8' );
+		$db->query( "SET SESSION sql_mode = 'NO_AUTO_VALUE_ON_ZERO'" );
+		$q = function ( $sql ) use ( $db ) {
+			if ( ! $db->query( $sql ) ) {
+				throw new WPMIG_Exception( 'Erreur SQL : ' . $db->error . ' — ' . substr( $sql, 0, 200 ) );
+			}
+		};
+		$e = function ( $value ) use ( $db ) {
+			return "'" . $db->real_escape_string( $value ) . "'";
+		};
+		$options  = WPMIG_SQL::quote_id( $tmp . 'options' );
+		$usermeta = WPMIG_SQL::quote_id( $tmp . 'usermeta' );
+		$users    = WPMIG_SQL::quote_id( $tmp . 'users' );
+		if ( ! isset( $tables[ $tmp . 'options' ] ) ) {
+			throw new WPMIG_Exception( 'La table options est absente de la sauvegarde : installation impossible.' );
+		}
+
+		// URLs (in case the search & replace could not update them, e.g. custom values).
+		$q( 'UPDATE ' . $options . ' SET option_value = ' . $e( $p['url_site'] ) . " WHERE option_name = 'siteurl'" );
+		$q( 'UPDATE ' . $options . ' SET option_value = ' . $e( $p['url_home'] ) . " WHERE option_name = 'home'" );
+
+		// Table prefix change: keys that embed the prefix.
+		if ( $old !== $new ) {
+			$q( 'UPDATE ' . $options . ' SET option_name = ' . $e( $new . 'user_roles' ) . ' WHERE option_name = ' . $e( $old . 'user_roles' ) );
+			if ( isset( $tables[ $tmp . 'usermeta' ] ) ) {
+				$q(
+					'UPDATE ' . $usermeta . ' SET meta_key = CONCAT(' . $e( $new ) . ', SUBSTRING(meta_key, ' . ( strlen( $old ) + 1 ) . '))'
+					. ' WHERE LEFT(meta_key, ' . strlen( $old ) . ') = BINARY ' . $e( $old )
+				);
+			}
+			$this->log( 'Préfixe de table modifié : ' . $old . ' → ' . $new );
+		}
+
+		// Rewrite rules are regenerated by WordPress, cached data is dropped.
+		$q( 'DELETE FROM ' . $options . " WHERE option_name IN ('rewrite_rules', 'wpmig_installed') OR option_name LIKE '\\_transient\\_%' OR option_name LIKE '\\_site\\_transient\\_%'" );
+
+		// Administrator account.
+		if ( '' !== $p['admin_user'] && isset( $tables[ $tmp . 'users' ] ) ) {
+			$hash = function_exists( 'password_hash' ) ? password_hash( $p['admin_pass'], PASSWORD_BCRYPT ) : md5( $p['admin_pass'] );
+			$res  = $db->query( 'SELECT ID FROM ' . $users . ' WHERE user_login = ' . $e( $p['admin_user'] ) );
+			$row  = $res ? $res->fetch_row() : null;
+			if ( $row ) {
+				$id = (int) $row[0];
+				$q( 'UPDATE ' . $users . ' SET user_pass = ' . $e( $hash ) . ( '' !== $p['admin_email'] ? ', user_email = ' . $e( $p['admin_email'] ) : '' ) . ' WHERE ID = ' . $id );
+				$this->log( 'Mot de passe de l\'utilisateur « ' . $p['admin_user'] . ' » modifié.' );
+			} else {
+				$nicename = strtolower( preg_replace( '/[^A-Za-z0-9_\-]+/', '-', $p['admin_user'] ) );
+				$q(
+					'INSERT INTO ' . $users . ' (user_login, user_pass, user_nicename, user_email, user_url, user_registered, user_activation_key, user_status, display_name) VALUES ('
+					. $e( $p['admin_user'] ) . ', ' . $e( $hash ) . ', ' . $e( $nicename ) . ', ' . $e( $p['admin_email'] ) . ", '', " . $e( gmdate( 'Y-m-d H:i:s' ) ) . ", '', 0, " . $e( $p['admin_user'] ) . ')'
+				);
+				$id = (int) $db->insert_id;
+				$this->log( 'Administrateur « ' . $p['admin_user'] . ' » créé.' );
+			}
+			if ( isset( $tables[ $tmp . 'usermeta' ] ) ) {
+				$q( 'DELETE FROM ' . $usermeta . ' WHERE user_id = ' . $id . ' AND meta_key IN (' . $e( $new . 'capabilities' ) . ', ' . $e( $new . 'user_level' ) . ')' );
+				$q( 'INSERT INTO ' . $usermeta . ' (user_id, meta_key, meta_value) VALUES (' . $id . ', ' . $e( $new . 'capabilities' ) . ", 'a:1:{s:13:\"administrator\";b:1;}'), (" . $id . ', ' . $e( $new . 'user_level' ) . ", '10')" );
+			}
+		}
+
+		// Post-installation flag, handled by the WP Migration plugin on the first admin page load.
+		$flag = json_encode(
+			array(
+				'time'    => time(),
+				'package' => $m['package'],
+				'from'    => $m['site']['home'],
+				'to'      => $p['url_home'],
+			)
+		);
+		$q( 'INSERT INTO ' . $options . " (option_name, option_value, autoload) VALUES ('wpmig_installed', " . $e( $flag ) . ", 'yes')" );
+		$db->close();
+	}
+
+	/**
+	 * Write wp-config.php.
+	 *
+	 * @throws WPMIG_Exception On error.
+	 */
+	private function step_config() {
+		$m        = $this->manifest();
+		$p        = $this->state['params'];
+		$source   = ! empty( $m['wp_config'] ) ? base64_decode( $m['wp_config'] ) : '';
+		$generated = false;
+		if ( '' === trim( (string) $source ) ) {
+			$source    = WPMIG_Config_Editor::skeleton();
+			$generated = true;
+			$this->warn( 'wp-config.php d\'origine indisponible : un fichier neuf a été généré.' );
+		}
+		$config = new WPMIG_Config_Editor( $source );
+
+		// Old paths and URLs (WP_TEMP_DIR, WPCACHEHOME, custom constants...).
+		$replacer = new WPMIG_Replacer( $this->replacement_pairs() );
+		$config->transform( array( $replacer, 'replace_plain' ) );
+
+		$db       = $this->connect( $p );
+		$importer = new WPMIG_DB_Importer( $db, array() );
+		$charset  = $importer->supported_charset( $m['site']['db_charset'] ? $m['site']['db_charset'] : 'utf8mb4' );
+		$db->close();
+
+		$config->set_define( 'DB_NAME', var_export( $p['db_name'], true ) );
+		$config->set_define( 'DB_USER', var_export( $p['db_user'], true ) );
+		$config->set_define( 'DB_PASSWORD', var_export( $p['db_pass'], true ) );
+		$config->set_define( 'DB_HOST', var_export( $p['db_host'], true ) );
+		$current = $config->get_define( 'DB_CHARSET' );
+		if ( null === $current || $importer->supported_charset( $current ) !== strtolower( $current ) ) {
+			$config->set_define( 'DB_CHARSET', var_export( $charset, true ) );
+		}
+		$collate = $config->get_define( 'DB_COLLATE' );
+		if ( null !== $collate && '' !== $collate && $importer->supported_collation( $collate ) !== strtolower( $collate ) ) {
+			$config->set_define( 'DB_COLLATE', "''" );
+		}
+		$config->set_prefix( $p['db_prefix'] );
+
+		foreach ( array( 'WP_HOME' => $p['url_home'], 'WP_SITEURL' => $p['url_site'] ) as $const => $url ) {
+			$code = $config->get_define_code( $const );
+			if ( null !== $code && null !== WPMIG_Config_Editor::unquote( $code ) ) {
+				$config->set_define( $const, var_export( $url, true ) );
+			}
+		}
+		// Constants that would point to the old server.
+		$remove = array( 'COOKIE_DOMAIN', 'DOMAIN_CURRENT_SITE' );
+		if ( ! empty( $m['site']['content_relocated'] ) ) {
+			$remove = array_merge( $remove, array( 'WP_CONTENT_DIR', 'WP_CONTENT_URL', 'WP_PLUGIN_DIR', 'WP_PLUGIN_URL', 'PLUGINDIR', 'WPMU_PLUGIN_DIR', 'WPMU_PLUGIN_URL' ) );
+		}
+		foreach ( $remove as $const ) {
+			if ( $config->remove_define( $const ) ) {
+				$this->state['notices'][] = 'wp-config.php : constante ' . $const . ' retirée.';
+			}
+		}
+		// No redirection loop when the new site has no certificate.
+		if ( 0 === stripos( $p['url_site'], 'http://' ) ) {
+			foreach ( array( 'FORCE_SSL_ADMIN', 'FORCE_SSL_LOGIN' ) as $const ) {
+				$code = $config->get_define_code( $const );
+				if ( null !== $code && 'false' !== strtolower( $code ) ) {
+					$config->set_define( $const, 'false' );
+					$this->state['notices'][] = 'wp-config.php : ' . $const . ' désactivé (le nouveau site est en http).';
+				}
+			}
+		}
+		if ( $p['new_salts'] || $generated ) {
+			$config->regenerate_salts();
+		}
+		// Absolute includes that do not exist on this server.
+		if ( preg_match_all( '/(?:require|include)(?:_once)?\s*\(?\s*[\'"](\/[^\'"]+)[\'"]/', $config->code(), $inc ) ) {
+			foreach ( $inc[1] as $path ) {
+				if ( ! file_exists( $path ) ) {
+					$this->warn( 'wp-config.php inclut un fichier absent sur ce serveur : ' . $path . ' — à corriger manuellement si le site ne s\'affiche pas.' );
+				}
+			}
+		}
+		$lint = $config->lint();
+		if ( true !== $lint ) {
+			$this->warn( 'wp-config.php d\'origine invalide (' . $lint . ') : un fichier neuf a été généré.' );
+			$config = new WPMIG_Config_Editor( WPMIG_Config_Editor::skeleton() );
+			$config->set_define( 'DB_NAME', var_export( $p['db_name'], true ) );
+			$config->set_define( 'DB_USER', var_export( $p['db_user'], true ) );
+			$config->set_define( 'DB_PASSWORD', var_export( $p['db_pass'], true ) );
+			$config->set_define( 'DB_HOST', var_export( $p['db_host'], true ) );
+			$config->set_define( 'DB_CHARSET', var_export( $charset, true ) );
+			$config->set_prefix( $p['db_prefix'] );
+		}
+
+		$target = $this->root . '/wp-config.php';
+		if ( is_file( $target ) ) {
+			$backup = $target . '.wpmig-backup-' . gmdate( 'Ymd-His' );
+			if ( @copy( $target, $backup ) ) {
+				$this->state['notices'][] = 'wp-config.php existant sauvegardé : ' . basename( $backup );
+			}
+		}
+		if ( false === @file_put_contents( $target, $config->code() ) ) {
+			throw new WPMIG_Exception( 'Impossible d\'écrire wp-config.php : vérifiez les permissions du dossier.' );
+		}
+		@chmod( $target, 0640 );
+		if ( ! is_readable( $target ) ) {
+			@chmod( $target, 0644 );
+		}
+		$this->log( 'wp-config.php écrit.' );
+	}
+
+	/**
+	 * Replace the live tables by the imported ones (atomic RENAME).
+	 *
+	 * @throws WPMIG_Exception On error.
+	 */
+	private function step_swap() {
+		$p      = $this->state['params'];
+		$db     = $this->connect( $p );
+		$tmp    = $this->state['tmp_prefix'];
+		$tables = $this->list_tables( $db );
+		$db->query( 'SET SESSION foreign_key_checks = 0' );
+
+		if ( 'empty' === $p['db_action'] ) {
+			foreach ( $tables as $name => $type ) {
+				if ( 0 === strpos( $name, $tmp ) ) {
+					continue;
+				}
+				$ok = $db->query( ( 'VIEW' === $type ? 'DROP VIEW IF EXISTS ' : 'DROP TABLE IF EXISTS ' ) . WPMIG_SQL::quote_id( $name ) );
+				if ( ! $ok ) {
+					throw new WPMIG_Exception( 'Impossible de supprimer la table ' . $name . ' : ' . $db->error );
+				}
+			}
+			$tables = $this->list_tables( $db );
+			$this->log( 'Base vidée.' );
+		}
+
+		$backup  = 'wpmb' . self::random_string( 4, true ) . '_';
+		$renames = array();
+		$drops   = array();
+		foreach ( $this->table_map() as $source => $temp ) {
+			if ( ! isset( $tables[ $temp ] ) ) {
+				continue;
+			}
+			$suffix = substr( $temp, strlen( $tmp ) );
+			$final  = $p['db_prefix'] . $suffix;
+			if ( isset( $tables[ $final ] ) ) {
+				$renames[] = WPMIG_SQL::quote_id( $final ) . ' TO ' . WPMIG_SQL::quote_id( $backup . $suffix );
+				$drops[]   = $backup . $suffix;
+			}
+			$renames[] = WPMIG_SQL::quote_id( $temp ) . ' TO ' . WPMIG_SQL::quote_id( $final );
+		}
+		if ( ! $renames ) {
+			throw new WPMIG_Exception( 'Aucune table importée.' );
+		}
+		if ( ! $db->query( 'RENAME TABLE ' . implode( ', ', $renames ) ) ) {
+			throw new WPMIG_Exception( 'Impossible d\'activer les nouvelles tables : ' . $db->error );
+		}
+		foreach ( $drops as $name ) {
+			$db->query( 'DROP TABLE IF EXISTS ' . WPMIG_SQL::quote_id( $name ) );
+		}
+		$this->log( count( $renames ) - count( $drops ) . ' tables activées, ' . count( $drops ) . ' anciennes tables remplacées.' );
+		$db->close();
+	}
+
+	/**
+	 * .htaccess, cleanup, summary.
+	 */
+	private function step_finalize() {
+		$m    = $this->manifest();
+		$p    = $this->state['params'];
+		$path = (string) parse_url( $p['url_home'], PHP_URL_PATH );
+		$base = rtrim( $path, '/' ) . '/';
+
+		$server = isset( $_SERVER['SERVER_SOFTWARE'] ) ? $_SERVER['SERVER_SOFTWARE'] : '';
+		if ( false === stripos( $server, 'microsoft-iis' ) && rtrim( $p['url_home'], '/' ) === rtrim( $p['url_site'], '/' ) ) {
+			$htaccess = $this->root . '/.htaccess';
+			if ( is_file( $htaccess ) ) {
+				@copy( $htaccess, $htaccess . '.wpmig-backup-' . gmdate( 'Ymd-His' ) );
+			}
+			$rules  = "# BEGIN WordPress\n";
+			$rules .= "<IfModule mod_rewrite.c>\nRewriteEngine On\n";
+			$rules .= "RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]\n";
+			$rules .= 'RewriteBase ' . $base . "\n";
+			$rules .= "RewriteRule ^index\\.php$ - [L]\n";
+			$rules .= "RewriteCond %{REQUEST_FILENAME} !-f\nRewriteCond %{REQUEST_FILENAME} !-d\n";
+			$rules .= 'RewriteRule . ' . $base . "index.php [L]\n</IfModule>\n# END WordPress\n";
+			if ( false !== @file_put_contents( $htaccess, $rules ) ) {
+				$this->log( '.htaccess WordPress standard écrit (RewriteBase ' . $base . ').' );
+			} else {
+				$this->warn( 'Impossible d\'écrire .htaccess : enregistrez les réglages des permaliens après connexion.' );
+			}
+		}
+		@unlink( $this->data_dir . '/database.sql' );
+		if ( function_exists( 'opcache_reset' ) ) {
+			@opcache_reset();
+		}
+		if ( ! empty( $this->state['db']['errors'] ) ) {
+			$this->warn( $this->state['db']['errors'] . ' requête(s) SQL en erreur (détails dans ' . basename( $this->data_dir ) . '/install.log).' );
+		}
+		$this->state['status']   = 'complete';
+		$this->state['step']     = 'done';
+		$this->state['progress'] = 100;
+		$this->state['finished'] = time();
+		$this->state['message']  = 'Installation terminée.';
+		$this->state['result']   = array(
+			'home'  => $p['url_home'],
+			'login' => $p['url_site'] . '/wp-login.php',
+			'admin' => $p['url_site'] . '/wp-admin/',
+			'time'  => $this->state['finished'] - $this->state['started'],
+		);
+		$this->log( 'Installation terminée en ' . $this->state['result']['time'] . ' s.' );
+	}
+
+	/**
+	 * Remove the installer, the archive and the working directory.
+	 *
+	 * @return array Result.
+	 */
+	private function cleanup() {
+		$result  = isset( $this->state['result'] ) ? $this->state['result'] : array();
+		$archive = $this->archive_path();
+		if ( $archive ) {
+			@unlink( $archive );
+		}
+		$this->rrmdir( $this->data_dir );
+		@unlink( $this->file );
+		$left = array();
+		foreach ( array( $this->file, $archive, $this->data_dir ) as $path ) {
+			if ( $path && file_exists( $path ) ) {
+				$left[] = basename( $path );
+			}
+		}
+		return array(
+			'removed' => ! $left,
+			'left'    => $left,
+			'admin'   => isset( $result['admin'] ) ? $result['admin'] : '',
+		);
+	}
+
+	/**
+	 * State sent to the browser.
+	 *
+	 * @return array
+	 */
+	private function public_state() {
+		return array(
+			'status'   => $this->state['status'],
+			'step'     => $this->state['step'],
+			'progress' => (int) $this->state['progress'],
+			'message'  => $this->state['message'],
+			'warnings' => array_values( array_slice( $this->state['warnings'], 0, 100 ) ),
+			'notices'  => array_values( array_unique( $this->state['notices'] ) ),
+			'result'   => $this->state['result'],
+		);
+	}
+
+	/* ------------------------------------------------------------------ */
+	/* HTTP                                                                */
+	/* ------------------------------------------------------------------ */
+
+	/**
+	 * Cookie name.
+	 *
+	 * @return string
+	 */
+	private function cookie_name() {
+		return 'wpmig_' . substr( md5( isset( $this->config['package'] ) ? $this->config['package'] : '' ), 0, 10 );
+	}
+
+	/**
+	 * Is the request authorized?
+	 *
+	 * @return bool
+	 */
+	private function authorized() {
+		$token = isset( $_POST['token'] ) ? (string) $_POST['token'] : '';
+		return '' !== $this->state['token'] && '' !== $token && hash_equals( $this->state['token'], $token );
+	}
+
+	/**
+	 * Main entry point.
+	 */
+	public function dispatch() {
+		if ( empty( $this->config['package'] ) ) {
+			echo 'Ce fichier est le modèle de l\'installeur WP Migration : utilisez le fichier installer.php généré avec votre package.';
+			return;
+		}
+		if ( $this->cli ) {
+			exit( $this->cli_main() );
+		}
+		if ( 'POST' === ( isset( $_SERVER['REQUEST_METHOD'] ) ? $_SERVER['REQUEST_METHOD'] : '' ) && isset( $_POST['wpmig_action'] ) ) {
+			$this->ajax( (string) $_POST['wpmig_action'] );
+			return;
+		}
+		$this->render_page();
+	}
+
+	/**
+	 * Send a JSON response.
+	 *
+	 * @param array $data Data.
+	 */
+	private function json( array $data ) {
+		while ( ob_get_level() > 0 ) {
+			ob_end_clean();
+		}
+		header( 'Content-Type: application/json; charset=utf-8' );
+		header( 'Cache-Control: no-store' );
+		header( 'X-Robots-Tag: noindex, nofollow' );
+		$json = json_encode( $data );
+		if ( false === $json && function_exists( 'json_last_error' ) ) {
+			$json = json_encode( array( 'ok' => false, 'error' => 'Réponse invalide (encodage).' ) );
+		}
+		echo $json;
+	}
+
+	/**
+	 * AJAX router.
+	 *
+	 * @param string $action Action.
+	 */
+	private function ajax( $action ) {
+		ob_start();
+		$self = $this;
+		register_shutdown_function(
+			function () use ( $self ) {
+				$error = error_get_last();
+				if ( $error && in_array( $error['type'], array( E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR ), true ) ) {
+					while ( ob_get_level() > 0 ) {
+						ob_end_clean();
+					}
+					if ( ! headers_sent() ) {
+						header( 'Content-Type: application/json; charset=utf-8' );
+					}
+					echo json_encode(
+						array(
+							'ok'    => false,
+							'error' => 'Erreur PHP fatale : ' . WPMIG_Installer::utf8( $error['message'] ) . ' (' . basename( $error['file'] ) . ':' . $error['line'] . ')',
+							'retry' => true,
+						)
+					);
+				}
+			}
+		);
+		try {
+			$this->ensure_data_dir();
+			$this->load_state();
+			$post = $_POST;
+			if ( function_exists( 'get_magic_quotes_gpc' ) && version_compare( PHP_VERSION, '7.4', '<' ) && @get_magic_quotes_gpc() ) {
+				$post = array_map( 'stripslashes', $post );
+			}
+			if ( 'auth' === $action ) {
+				$this->json( $this->ajax_auth( isset( $post['password'] ) ? (string) $post['password'] : '' ) );
+				return;
+			}
+			if ( ! $this->authorized() ) {
+				$this->json(
+					array(
+						'ok'    => false,
+						'auth'  => true,
+						'error' => 'Session expirée : rechargez la page.',
+					)
+				);
+				return;
+			}
+			switch ( $action ) {
+				case 'info':
+					$manifest = $this->manifest();
+					$checks   = $this->checks();
+					$defaults = array_merge(
+						array(
+							'db_host'   => 'localhost',
+							'db_name'   => '',
+							'db_user'   => '',
+							'db_pass'   => '',
+							'db_prefix' => $manifest['site']['table_prefix'],
+						),
+						$this->existing_config(),
+						array(
+							'url_site' => $this->detect_url(),
+							'url_home' => $this->detect_url(),
+						)
+					);
+					$this->json(
+						array(
+							'ok'       => true,
+							'package'  => array(
+								'name'       => $manifest['name'],
+								'created'    => $manifest['created'],
+								'home'       => $manifest['site']['home'],
+								'siteurl'    => $manifest['site']['siteurl'],
+								'blogname'   => $manifest['site']['blogname'],
+								'wp_version' => $manifest['site']['wp_version'],
+								'php'        => $manifest['site']['php_version'],
+								'db'         => $manifest['site']['db_version'],
+								'files'      => $manifest['stats']['files'],
+								'size'       => self::size( $manifest['stats']['size'] ),
+								'tables'     => count( $manifest['tables'] ),
+								'db_only'    => ! empty( $manifest['db_only'] ),
+							),
+							'checks'   => $checks,
+							'blocking' => $this->has_blocking( $checks ),
+							'defaults' => $defaults,
+							'state'    => $this->public_state(),
+						)
+					);
+					return;
+
+				case 'test_db':
+					$this->json( array_merge( array( 'ok' => true ), array( 'test' => $this->test_db( $post ) ) ) );
+					return;
+
+				case 'start':
+					$this->start( $post );
+					$this->json(
+						array(
+							'ok'    => true,
+							'state' => $this->public_state(),
+						)
+					);
+					return;
+
+				case 'step':
+					// A previous request may still be running (proxy timeout + retry): never run two steps at once.
+					$lock = @fopen( $this->data_dir . '/step.lock', 'c' );
+					if ( $lock && ! flock( $lock, LOCK_EX | LOCK_NB ) ) {
+						fclose( $lock );
+						$this->json(
+							array(
+								'ok'    => true,
+								'state' => array_merge( $this->public_state(), array( 'busy' => true ) ),
+							)
+						);
+						return;
+					}
+					$this->load_state();
+					if ( 'running' !== $this->state['status'] ) {
+						$this->json(
+							array(
+								'ok'    => true,
+								'state' => $this->public_state(),
+							)
+						);
+						return;
+					}
+					$this->json(
+						array(
+							'ok'    => true,
+							'state' => $this->step(),
+						)
+					);
+					return;
+
+				case 'cleanup':
+					if ( 'complete' !== $this->state['status'] ) {
+						throw new WPMIG_Exception( 'L\'installation n\'est pas terminée.' );
+					}
+					$this->json(
+						array(
+							'ok'      => true,
+							'cleanup' => $this->cleanup(),
+						)
+					);
+					return;
+			}
+			throw new WPMIG_Exception( 'Action inconnue.' );
+		} catch ( Exception $e ) {
+			if ( 'running' === $this->state['status'] ) {
+				$this->log( 'ERREUR : ' . $e->getMessage() );
+			}
+			$this->json(
+				array(
+					'ok'    => false,
+					'error' => $e->getMessage(),
+				)
+			);
+		}
+	}
+
+	/**
+	 * Authenticate the browser.
+	 *
+	 * @param string $password Password.
+	 * @return array
+	 */
+	private function ajax_auth( $password ) {
+		$needs_password = ! empty( $this->config['password_hash'] );
+		$cookie         = isset( $_COOKIE[ $this->cookie_name() ] ) ? (string) $_COOKIE[ $this->cookie_name() ] : '';
+		$has_cookie     = '' !== $this->state['token'] && '' !== $cookie && hash_equals( $this->state['token'], $cookie );
+
+		if ( ! $has_cookie ) {
+			if ( $needs_password ) {
+				if ( '' === $password ) {
+					return array(
+						'ok'       => false,
+						'password' => true,
+					);
+				}
+				if ( ! hash_equals( $this->config['password_hash'], hash( 'sha256', $this->config['password_salt'] . $password ) ) ) {
+					usleep( 500000 );
+					return array(
+						'ok'       => false,
+						'password' => true,
+						'error'    => 'Mot de passe incorrect.',
+					);
+				}
+			} elseif ( 'new' !== $this->state['status'] && '' !== $this->state['token'] ) {
+				return array(
+					'ok'    => false,
+					'error' => 'Une installation a déjà été lancée depuis un autre navigateur. Pour recommencer, supprimez le dossier ' . basename( $this->data_dir ) . ' sur le serveur.',
+				);
+			}
+			if ( '' === $this->state['token'] || 'new' === $this->state['status'] ) {
+				$this->state['token'] = self::random_string( 40, true );
+				$this->save_state();
+			}
+		}
+		$secure = ( ! empty( $_SERVER['HTTPS'] ) && 'off' !== strtolower( $_SERVER['HTTPS'] ) );
+		setcookie( $this->cookie_name(), $this->state['token'], 0, '', '', $secure, true );
+		return array(
+			'ok'    => true,
+			'token' => $this->state['token'],
+		);
+	}
+
+	/* ------------------------------------------------------------------ */
+	/* Command line                                                        */
+	/* ------------------------------------------------------------------ */
+
+	/**
+	 * CLI entry point.
+	 *
+	 * @return int Exit code.
+	 */
+	private function cli_main() {
+		$opts = getopt(
+			'h',
+			array( 'help', 'db-host:', 'db-name:', 'db-user:', 'db-pass:', 'db-prefix:', 'db-action:', 'db-create', 'url:', 'home-url:', 'skip-files', 'new-salts', 'keep-guid', 'admin-user:', 'admin-pass:', 'admin-email:', 'replace:', 'cleanup', 'check' )
+		);
+		$out = function ( $msg ) {
+			fwrite( STDOUT, $msg . "\n" );
+		};
+		if ( isset( $opts['h'] ) || isset( $opts['help'] ) ) {
+			$out( 'WP Migration — installeur (package ' . $this->config['package'] . ')' );
+			$out( '' );
+			$out( 'Usage : php ' . basename( $this->file ) . ' --url=https://nouveau-site.fr --db-name=base --db-user=utilisateur --db-pass=secret [options]' );
+			$out( '' );
+			$out( '  --db-host=localhost      Hôte MySQL (hôte:port ou hôte:/chemin/socket)' );
+			$out( '  --db-prefix=wp_          Préfixe des tables (par défaut : celui du site d\'origine)' );
+			$out( '  --db-action=replace      replace : remplace les tables du même préfixe ; empty : vide toute la base' );
+			$out( '  --db-create              Crée la base si elle n\'existe pas' );
+			$out( '  --home-url=URL           URL publique (home) si différente de --url' );
+			$out( '  --skip-files             Importe uniquement la base de données' );
+			$out( '  --new-salts              Régénère les clés de sécurité de wp-config.php' );
+			$out( '  --keep-guid              Ne modifie pas la colonne guid des articles' );
+			$out( '  --admin-user=, --admin-pass=, --admin-email=   Crée/réinitialise un administrateur' );
+			$out( '  --replace="ancien=>nouveau"   Remplacement supplémentaire (répétable)' );
+			$out( '  --check                  Affiche uniquement les vérifications' );
+			$out( '  --cleanup                Supprime l\'installeur, l\'archive et les fichiers temporaires à la fin' );
+			return 0;
+		}
+		try {
+			$this->ensure_data_dir();
+			$this->load_state();
+			$manifest = $this->manifest();
+			$out( 'WP Migration — ' . $manifest['site']['home'] . ' (WordPress ' . $manifest['site']['wp_version'] . ', ' . $manifest['created'] . ' UTC)' );
+			$checks = $this->checks();
+			foreach ( $checks as $c ) {
+				$out( sprintf( '  [%s] %s : %s', 'ok' === $c['status'] ? ' OK ' : ( 'error' === $c['status'] ? 'ERR ' : 'ATTN' ), $c['label'], $c['value'] ) );
+			}
+			if ( isset( $opts['check'] ) ) {
+				return $this->has_blocking( $checks ) ? 1 : 0;
+			}
+			if ( 'complete' === $this->state['status'] ) {
+				$out( 'Installation déjà terminée.' );
+			} else {
+				if ( 'new' === $this->state['status'] ) {
+					$map = array(
+						'db-host'     => 'db_host',
+						'db-name'     => 'db_name',
+						'db-user'     => 'db_user',
+						'db-pass'     => 'db_pass',
+						'db-prefix'   => 'db_prefix',
+						'db-action'   => 'db_action',
+						'url'         => 'url_site',
+						'home-url'    => 'url_home',
+						'admin-user'  => 'admin_user',
+						'admin-pass'  => 'admin_pass',
+						'admin-email' => 'admin_email',
+					);
+					$in = array();
+					foreach ( $map as $opt => $key ) {
+						if ( isset( $opts[ $opt ] ) ) {
+							$in[ $key ] = is_array( $opts[ $opt ] ) ? end( $opts[ $opt ] ) : $opts[ $opt ];
+						}
+					}
+					foreach ( array( 'db-create' => 'db_create', 'skip-files' => 'skip_files', 'new-salts' => 'new_salts', 'keep-guid' => 'keep_guid' ) as $opt => $key ) {
+						if ( isset( $opts[ $opt ] ) ) {
+							$in[ $key ] = '1';
+						}
+					}
+					if ( empty( $in['url_site'] ) ) {
+						throw new WPMIG_Exception( 'Précisez l\'URL du nouveau site avec --url=https://...' );
+					}
+					if ( isset( $opts['replace'] ) ) {
+						$in['extra_replace'] = implode( "\n", (array) $opts['replace'] );
+					}
+					$out( 'Installation…' );
+					$this->start( $in );
+				} else {
+					$out( 'Reprise de l\'installation en cours (étape ' . $this->state['step'] . ')…' );
+				}
+				$last = '';
+				while ( 'running' === $this->state['status'] ) {
+					$state = $this->step();
+					if ( $state['step'] !== $last ) {
+						$last = $state['step'];
+					}
+				}
+				foreach ( $this->state['notices'] as $n ) {
+					$out( '  - ' . $n );
+				}
+				foreach ( $this->state['warnings'] as $w ) {
+					$out( '  ! ' . $w );
+				}
+				$out( 'Terminé : ' . $this->state['result']['home'] );
+			}
+			if ( isset( $opts['cleanup'] ) ) {
+				$res = $this->cleanup();
+				$out( $res['removed'] ? 'Fichiers d\'installation supprimés.' : 'À supprimer manuellement : ' . implode( ', ', $res['left'] ) );
+			}
+			return 0;
+		} catch ( Exception $e ) {
+			fwrite( STDERR, 'ERREUR : ' . $e->getMessage() . "\n" );
+			return 1;
+		}
+	}
+
+	/* ------------------------------------------------------------------ */
+	/* Page                                                                */
+	/* ------------------------------------------------------------------ */
+
+	/**
+	 * Render the installer page.
+	 */
+	private function render_page() {
+		header( 'Content-Type: text/html; charset=utf-8' );
+		header( 'Cache-Control: no-store' );
+		header( 'X-Robots-Tag: noindex, nofollow' );
+		header( 'X-Frame-Options: DENY' );
+		$boot = array(
+			'package'  => $this->config['name'],
+			'source'   => $this->config['source_url'],
+			'created'  => $this->config['created'],
+			'password' => ! empty( $this->config['password_hash'] ),
+			'version'  => WPMIG_INSTALLER,
+		);
+		?><!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>WP Migration — Installeur</title>
+<style>
+:root{--bg:#f0f2f5;--card:#fff;--text:#1d2327;--muted:#646970;--border:#dcdcde;--accent:#2271b1;--accent-h:#135e96;--ok:#00a32a;--warn:#dba617;--err:#d63638;--code:#f6f7f7}
+@media (prefers-color-scheme:dark){:root{--bg:#16181c;--card:#1f2228;--text:#e6e6e6;--muted:#a0a5aa;--border:#33373e;--accent:#4f94d4;--accent-h:#72aee6;--code:#2a2e35}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Oxygen-Sans,Ubuntu,Cantarell,"Helvetica Neue",sans-serif}
+.wrap{max-width:860px;margin:0 auto;padding:24px 16px 60px}
+header{display:flex;align-items:center;gap:12px;margin-bottom:20px}
+header .logo{width:40px;height:40px;border-radius:10px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:18px}
+header h1{font-size:20px;margin:0}
+header small{color:var(--muted);display:block;font-size:13px}
+.steps{display:flex;gap:6px;margin:0 0 18px;padding:0;list-style:none;flex-wrap:wrap}
+.steps li{flex:1;min-width:120px;padding:8px 10px;border-radius:8px;background:var(--card);border:1px solid var(--border);font-size:13px;color:var(--muted)}
+.steps li.active{border-color:var(--accent);color:var(--text);font-weight:600}
+.steps li.done{color:var(--ok)}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px 22px;margin-bottom:16px}
+.card h2{font-size:17px;margin:0 0 14px}
+.card h3{font-size:15px;margin:18px 0 8px}
+table{width:100%;border-collapse:collapse;font-size:14px}
+td,th{padding:7px 6px;border-bottom:1px solid var(--border);text-align:left;vertical-align:top}
+th{width:34%;color:var(--muted);font-weight:500}
+.badge{display:inline-block;min-width:54px;text-align:center;padding:1px 8px;border-radius:20px;font-size:12px;font-weight:600;color:#fff}
+.b-ok{background:var(--ok)}.b-warning{background:var(--warn)}.b-error{background:var(--err)}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px 16px}
+@media (max-width:640px){.grid{grid-template-columns:1fr}}
+label{display:block;font-size:13px;font-weight:600;margin-bottom:4px}
+label.inline{display:flex;gap:8px;align-items:flex-start;font-weight:400;font-size:14px;margin:8px 0}
+input[type=text],input[type=password],input[type=email],input[type=url],textarea,select{width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font:inherit;background:var(--card);color:var(--text)}
+textarea{min-height:70px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px}
+.hint{color:var(--muted);font-size:12.5px;margin-top:3px}
+button,.button{display:inline-block;border:1px solid var(--accent);background:var(--card);color:var(--accent);padding:8px 16px;border-radius:6px;font:inherit;font-weight:600;cursor:pointer;text-decoration:none}
+button.primary,.button.primary{background:var(--accent);color:#fff}
+button.primary:hover,.button.primary:hover{background:var(--accent-h)}
+button:disabled{opacity:.5;cursor:not-allowed}
+button.danger{border-color:var(--err);color:var(--err)}
+.actions{display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap;margin-top:18px}
+.msg{padding:9px 12px;border-radius:6px;margin:6px 0;font-size:14px;border-left:4px solid}
+.msg.ok{border-color:var(--ok);background:rgba(0,163,42,.08)}
+.msg.warning{border-color:var(--warn);background:rgba(219,166,23,.10)}
+.msg.error{border-color:var(--err);background:rgba(214,54,56,.08)}
+.bar{height:14px;background:var(--code);border-radius:10px;overflow:hidden;border:1px solid var(--border)}
+.bar span{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--accent),var(--accent-h));transition:width .4s}
+.progress-label{display:flex;justify-content:space-between;margin:8px 0 0;font-size:14px;color:var(--muted)}
+details{margin-top:12px}summary{cursor:pointer;font-weight:600}
+code{background:var(--code);padding:1px 5px;border-radius:4px;font-size:13px}
+ul.list{margin:6px 0;padding-left:20px}
+.hidden{display:none}
+.big{font-size:18px;font-weight:600}
+</style>
+</head>
+<body>
+<div class="wrap">
+	<header>
+		<div class="logo">WM</div>
+		<div><h1>WP Migration — Installeur</h1><small id="subtitle"></small></div>
+	</header>
+	<ol class="steps" id="steps">
+		<li data-step="1">1. Vérifications</li>
+		<li data-step="2">2. Base de données &amp; URL</li>
+		<li data-step="3">3. Installation</li>
+		<li data-step="4">4. Terminé</li>
+	</ol>
+	<div id="app"><div class="card">Chargement…</div></div>
+</div>
+<script>
+(function () {
+	'use strict';
+	var BOOT = <?php echo json_encode( $boot ); ?>;
+	var token = '', info = null, lastTest = null, retries = 0;
+	var app = document.getElementById('app');
+	document.getElementById('subtitle').textContent = 'Package « ' + BOOT.package + ' » — ' + BOOT.source + ' — ' + BOOT.created + ' UTC';
+
+	function esc(s) { return String(s === null || s === undefined ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+	function setStep(n) {
+		var items = document.querySelectorAll('#steps li');
+		for (var i = 0; i < items.length; i++) {
+			var s = +items[i].getAttribute('data-step');
+			items[i].className = s === n ? 'active' : (s < n ? 'done' : '');
+		}
+	}
+	function api(action, data) {
+		var body = new FormData();
+		body.append('wpmig_action', action);
+		body.append('token', token);
+		data = data || {};
+		Object.keys(data).forEach(function (k) { body.append(k, data[k]); });
+		return fetch(window.location.pathname, { method: 'POST', body: body, credentials: 'same-origin' })
+			.then(function (r) {
+				return r.text().then(function (t) {
+					try { return JSON.parse(t); } catch (e) {
+						var err = new Error('Réponse invalide du serveur (HTTP ' + r.status + ') : ' + t.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 300));
+						err.retry = true; throw err;
+					}
+				});
+			});
+	}
+	function msg(type, text) { return '<div class="msg ' + type + '">' + esc(text) + '</div>'; }
+	function badge(s) { var l = { ok: 'OK', warning: 'Attention', error: 'Erreur' }[s] || s; return '<span class="badge b-' + s + '">' + l + '</span>'; }
+	function formData(form) {
+		var out = {}, els = form.elements;
+		for (var i = 0; i < els.length; i++) {
+			var el = els[i];
+			if (!el.name) continue;
+			if (el.type === 'checkbox') { out[el.name] = el.checked ? '1' : ''; }
+			else if (el.type === 'radio') { if (el.checked) out[el.name] = el.value; }
+			else { out[el.name] = el.value; }
+		}
+		return out;
+	}
+
+	function auth(password) {
+		api('auth', { password: password || '' }).then(function (r) {
+			if (r.ok) { token = r.token; loadInfo(); return; }
+			if (r.password) { renderPassword(r.error); return; }
+			app.innerHTML = '<div class="card">' + msg('error', r.error || 'Accès refusé.') + '</div>';
+		}).catch(function (e) { app.innerHTML = '<div class="card">' + msg('error', e.message) + '</div>'; });
+	}
+
+	function renderPassword(error) {
+		setStep(1);
+		app.innerHTML = '<div class="card"><h2>Installeur protégé</h2>' + (error ? msg('error', error) : '') +
+			'<form id="pw"><label for="password">Mot de passe de l\'installeur</label><input type="password" id="password" autocomplete="current-password" required>' +
+			'<div class="actions"><button class="primary" type="submit">Continuer</button></div></form></div>';
+		document.getElementById('pw').onsubmit = function (e) { e.preventDefault(); auth(document.getElementById('password').value); };
+		document.getElementById('password').focus();
+	}
+
+	function loadInfo() {
+		api('info').then(function (r) {
+			if (!r.ok) { app.innerHTML = '<div class="card">' + msg('error', r.error) + '</div>'; return; }
+			info = r;
+			if (r.state.status === 'running') { renderProgress(); run(); }
+			else if (r.state.status === 'complete') { renderDone(r.state); }
+			else { renderChecks(); }
+		}).catch(function (e) { app.innerHTML = '<div class="card">' + msg('error', e.message) + '</div>'; });
+	}
+
+	function renderChecks() {
+		setStep(1);
+		var p = info.package, rows = '';
+		info.checks.forEach(function (c) { rows += '<tr><th>' + esc(c.label) + '</th><td>' + badge(c.status) + ' ' + esc(c.value) + '</td></tr>'; });
+		app.innerHTML =
+			'<div class="card"><h2>Site à installer</h2><table>' +
+			'<tr><th>Site d\'origine</th><td><strong>' + esc(p.blogname) + '</strong> — ' + esc(p.home) + '</td></tr>' +
+			'<tr><th>Créé le</th><td>' + esc(p.created) + ' UTC</td></tr>' +
+			'<tr><th>WordPress</th><td>' + esc(p.wp_version) + ' (PHP ' + esc(p.php) + ', ' + esc(p.db) + ')</td></tr>' +
+			'<tr><th>Contenu</th><td>' + (p.db_only ? 'Base de données uniquement' : esc(p.files) + ' fichiers (' + esc(p.size) + ')') + ', ' + esc(p.tables) + ' tables</td></tr>' +
+			'</table></div>' +
+			'<div class="card"><h2>Vérifications du serveur</h2><table>' + rows + '</table>' +
+			(info.blocking ? msg('error', 'Corrigez les erreurs ci-dessus puis rechargez la page.') : '') +
+			'<div class="actions"><button type="button" onclick="location.reload()">Relancer les vérifications</button><button class="primary" id="next" ' + (info.blocking ? 'disabled' : '') + '>Continuer</button></div></div>';
+		document.getElementById('next').onclick = renderForm;
+	}
+
+	function field(name, label, value, type, hint, attrs) {
+		return '<div><label for="f_' + name + '">' + label + '</label><input type="' + (type || 'text') + '" id="f_' + name + '" name="' + name + '" value="' + esc(value) + '" ' + (attrs || '') + '>' + (hint ? '<div class="hint">' + hint + '</div>' : '') + '</div>';
+	}
+
+	function renderForm() {
+		setStep(2);
+		var d = info.defaults, p = info.package;
+		app.innerHTML =
+			'<form id="form">' +
+			'<div class="card"><h2>Base de données de destination</h2><div class="grid">' +
+			field('db_host', 'Hôte', d.db_host, 'text', 'Souvent « localhost ». Formats acceptés : hôte:port, hôte:/chemin/socket.') +
+			field('db_name', 'Nom de la base', d.db_name, 'text', '', 'required') +
+			field('db_user', 'Utilisateur', d.db_user, 'text', '', 'required autocomplete="off"') +
+			field('db_pass', 'Mot de passe', d.db_pass, 'password', '', 'autocomplete="new-password"') +
+			field('db_prefix', 'Préfixe des tables', d.db_prefix, 'text', 'Préfixe d\'origine : <code>' + esc(info.defaults.db_prefix) + '</code>') +
+			'<div><label>Tables existantes</label>' +
+			'<label class="inline"><input type="radio" name="db_action" value="replace" checked> Remplacer uniquement les tables du site importé (même préfixe)</label>' +
+			'<label class="inline"><input type="radio" name="db_action" value="empty"> Vider entièrement la base (supprime toutes les tables)</label>' +
+			'<label class="inline"><input type="checkbox" name="db_create" value="1"> Créer la base si elle n\'existe pas</label></div>' +
+			'</div><div id="dbtest"></div><div class="actions"><button type="button" id="test">Tester la connexion</button></div></div>' +
+			'<div class="card"><h2>Nouvelle adresse du site</h2>' +
+			'<p class="hint" style="margin-top:-6px">Ancienne adresse : <code>' + esc(p.home) + '</code>. Toutes les occurrences (y compris dans les données sérialisées et JSON) seront remplacées.</p><div class="grid">' +
+			field('url_site', 'Adresse de WordPress (siteurl)', d.url_site, 'url', 'Détectée automatiquement d\'après l\'adresse de l\'installeur.', 'required') +
+			field('url_home', 'Adresse du site (home)', d.url_home, 'url', 'Identique à la précédente dans la plupart des cas.', 'required') +
+			'</div>' +
+			'<details><summary>Options avancées</summary>' +
+			(p.db_only ? '' : '<label class="inline"><input type="checkbox" name="skip_files" value="1"> Ne pas extraire les fichiers (importer uniquement la base de données)</label>') +
+			'<label class="inline"><input type="checkbox" name="new_salts" value="1"> Régénérer les clés de sécurité (déconnecte tous les utilisateurs)</label>' +
+			'<label class="inline"><input type="checkbox" name="keep_guid" value="1"> Ne pas modifier la colonne « guid » des articles</label>' +
+			'<label for="f_extra">Remplacements supplémentaires (un par ligne : <code>ancien => nouveau</code>)</label><textarea id="f_extra" name="extra_replace" placeholder="contact@ancien-domaine.fr => contact@nouveau-domaine.fr"></textarea>' +
+			'<h3>Compte administrateur (facultatif)</h3><p class="hint">Crée un administrateur, ou change le mot de passe s\'il existe déjà. Sinon, connectez-vous avec vos identifiants habituels du site d\'origine.</p><div class="grid">' +
+			field('admin_user', 'Identifiant', '', 'text', '', 'autocomplete="off"') +
+			field('admin_pass', 'Mot de passe (8 caractères min.)', '', 'password', '', 'autocomplete="new-password"') +
+			field('admin_email', 'E-mail', '', 'email') +
+			'</div></details></div>' +
+			'<div class="card"><label class="inline"><input type="checkbox" id="confirm" required> J\'ai compris que les fichiers et les tables existants à cette adresse seront remplacés.</label>' +
+			'<div id="starterr"></div><div class="actions"><button type="button" id="back">Retour</button><button class="primary" type="submit" id="go">Lancer l\'installation</button></div></div>' +
+			'</form>';
+		document.getElementById('back').onclick = renderChecks;
+		document.getElementById('test').onclick = testDb;
+		document.getElementById('form').onsubmit = function (e) { e.preventDefault(); startInstall(); };
+	}
+
+	function renderTest(t) {
+		var html = '';
+		t.messages.forEach(function (m) { html += msg(m[0], m[1]); });
+		document.getElementById('dbtest').innerHTML = html;
+	}
+
+	function testDb() {
+		var btn = document.getElementById('test');
+		btn.disabled = true; btn.textContent = 'Test en cours…';
+		return api('test_db', formData(document.getElementById('form'))).then(function (r) {
+			btn.disabled = false; btn.textContent = 'Tester la connexion';
+			if (!r.ok) { document.getElementById('dbtest').innerHTML = msg('error', r.error); return false; }
+			lastTest = r.test; renderTest(r.test); return r.test.ok;
+		}).catch(function (e) { btn.disabled = false; btn.textContent = 'Tester la connexion'; document.getElementById('dbtest').innerHTML = msg('error', e.message); return false; });
+	}
+
+	function startInstall() {
+		var go = document.getElementById('go'), err = document.getElementById('starterr');
+		err.innerHTML = '';
+		go.disabled = true;
+		testDb().then(function (ok) {
+			if (!ok) { go.disabled = false; err.innerHTML = msg('error', 'Corrigez les paramètres de la base de données.'); return; }
+			api('start', formData(document.getElementById('form'))).then(function (r) {
+				if (!r.ok) { go.disabled = false; err.innerHTML = msg('error', r.error); return; }
+				renderProgress(); run();
+			}).catch(function (e) { go.disabled = false; err.innerHTML = msg('error', e.message); });
+		});
+	}
+
+	function renderProgress() {
+		setStep(3);
+		app.innerHTML = '<div class="card"><h2>Installation en cours</h2><div class="bar"><span id="bar"></span></div>' +
+			'<div class="progress-label"><span id="pmsg">Démarrage…</span><span id="ppct">0 %</span></div>' +
+			'<div id="perr"></div><p class="hint">Ne fermez pas cette page. En cas de coupure, rechargez-la : l\'installation reprendra où elle s\'était arrêtée.</p></div>';
+	}
+
+	function updateProgress(s) {
+		document.getElementById('bar').style.width = s.progress + '%';
+		document.getElementById('ppct').textContent = s.progress + ' %';
+		document.getElementById('pmsg').textContent = s.message;
+	}
+
+	function run() {
+		api('step').then(function (r) {
+			if (!r.ok) {
+				if (r.auth) { location.reload(); return; }
+				throw Object.assign(new Error(r.error), { retry: !!r.retry, fatal: !r.retry });
+			}
+			retries = 0;
+			document.getElementById('perr').innerHTML = '';
+			updateProgress(r.state);
+			if (r.state.status === 'complete') { renderDone(r.state); return; }
+			setTimeout(run, r.state.busy ? 3000 : 150);
+		}).catch(function (e) {
+			retries++;
+			if (!e.fatal && retries <= 6) {
+				document.getElementById('perr').innerHTML = msg('warning', 'Problème temporaire (' + e.message + '). Nouvelle tentative ' + retries + '/6…');
+				setTimeout(run, 2000 * retries);
+				return;
+			}
+			document.getElementById('perr').innerHTML = msg('error', e.message) +
+				'<div class="actions"><button class="primary" id="retry">Réessayer</button></div>';
+			document.getElementById('retry').onclick = function () { retries = 0; document.getElementById('perr').innerHTML = ''; run(); };
+		});
+	}
+
+	function renderDone(s) {
+		setStep(4);
+		var res = s.result || {}, list = '';
+		(s.notices || []).forEach(function (n) { list += '<li>' + esc(n) + '</li>'; });
+		var warns = '';
+		(s.warnings || []).forEach(function (w) { warns += msg('warning', w); });
+		app.innerHTML = '<div class="card"><h2>✅ Installation terminée</h2>' +
+			'<p class="big">Le site est disponible à l\'adresse <a href="' + esc(res.home) + '" target="_blank" rel="noopener">' + esc(res.home) + '</a></p>' +
+			'<p>Connectez-vous avec les identifiants du site d\'origine (ou le compte administrateur défini à l\'étape précédente).</p>' +
+			warns + (list ? '<details><summary>Détails</summary><ul class="list">' + list + '</ul></details>' : '') +
+			'</div><div class="card"><h2>Sécurité : supprimez les fichiers d\'installation</h2>' +
+			'<p>L\'installeur, l\'archive et le dossier de travail contiennent une copie complète du site et de la base de données. Supprimez-les dès que vous avez vérifié le site.</p>' +
+			'<div id="cleanmsg"></div><div class="actions"><a class="button" href="' + esc(res.home) + '" target="_blank" rel="noopener">Voir le site</a>' +
+			'<button class="primary" id="clean">Supprimer les fichiers et se connecter</button></div></div>';
+		document.getElementById('clean').onclick = function () {
+			this.disabled = true;
+			api('cleanup').then(function (r) {
+				if (!r.ok) { document.getElementById('cleanmsg').innerHTML = msg('error', r.error); return; }
+				if (!r.cleanup.removed) { document.getElementById('cleanmsg').innerHTML = msg('warning', 'Supprimez manuellement : ' + r.cleanup.left.join(', ')); return; }
+				window.location.href = res.login || res.home;
+			}).catch(function (e) { document.getElementById('cleanmsg').innerHTML = msg('error', e.message); });
+		};
+	}
+
+	auth('');
+})();
+</script>
+</body>
+</html>
+<?php
+	}
+}
+
+$wpmig_installer = new WPMIG_Installer( $wpmig_config, __FILE__ );
+$wpmig_installer->dispatch();

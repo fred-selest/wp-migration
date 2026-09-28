@@ -1,0 +1,68 @@
+name: Release
+
+# Publie une release GitHub avec le zip de l'extension quand un tag vX.Y.Z est poussé :
+#   git tag v1.0.0 && git push origin v1.0.0
+# Peut aussi être lancé à la main (onglet Actions) pour obtenir le zip en artefact.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: zlib, mysqli, tokenizer
+          coverage: none
+
+      - name: Lint et tests
+        run: |
+          for f in $(find . -name '*.php' -not -path './.git/*') installer/installer.php.tpl; do php -l "$f" > /dev/null || exit 1; done
+          php tests/run-tests.php
+
+      - name: Version
+        id: version
+        run: |
+          VERSION=$(sed -n 's/^ \* Version: *//p' wp-migration.php | tr -d '[:space:]')
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if [ "${GITHUB_REF_TYPE}" = "tag" ] && [ "${GITHUB_REF_NAME}" != "v$VERSION" ]; then
+            echo "Le tag ${GITHUB_REF_NAME} ne correspond pas à la version de l'extension ($VERSION)." >&2
+            exit 1
+          fi
+          grep -q "^Stable tag: $VERSION$" readme.txt || { echo "Stable tag de readme.txt différent de $VERSION" >&2; exit 1; }
+          grep -q "^## \[$VERSION\]" CHANGELOG.md || { echo "Version $VERSION absente de CHANGELOG.md" >&2; exit 1; }
+
+      - name: Construire le zip
+        run: ./bin/make-zip.sh "$PWD/wp-migration-${{ steps.version.outputs.version }}.zip"
+
+      - name: Notes de version
+        run: |
+          awk -v v="${{ steps.version.outputs.version }}" '
+            $0 ~ "^## \\[" v "\\]" { found = 1; next }
+            found && /^## \[/ { exit }
+            found && /^\[/ { next }
+            found { print }
+          ' CHANGELOG.md > release-notes.md
+          cat release-notes.md
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wp-migration-${{ steps.version.outputs.version }}
+          path: wp-migration-${{ steps.version.outputs.version }}.zip
+
+      - name: Publier la release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          name: WP Migration ${{ steps.version.outputs.version }}
+          body_path: release-notes.md
+          files: wp-migration-${{ steps.version.outputs.version }}.zip

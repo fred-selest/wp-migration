@@ -1,0 +1,23 @@
+.wpmig .wpmig-card{background:#fff;border:1px solid #c3c4c7;border-radius:4px;padding:16px 20px;margin:16px 0;max-width:1100px;box-shadow:0 1px 1px rgba(0,0,0,.04)}
+.wpmig .wpmig-card h2{margin-top:0}
+.wpmig .wpmig-steps{display:flex;gap:6px;margin:0 0 12px;padding:0;list-style:none;flex-wrap:wrap}
+.wpmig .wpmig-steps li{flex:1;min-width:140px;margin:0;padding:8px 12px;border:1px solid #dcdcde;border-radius:4px;background:#f6f7f7;color:#646970}
+.wpmig .wpmig-steps li.active{border-color:#2271b1;background:#f0f6fc;color:#1d2327;font-weight:600}
+.wpmig .wpmig-steps li.done{color:#00a32a}
+.wpmig .wpmig-actions{display:flex;gap:8px;justify-content:flex-end;margin:16px 0 0}
+.wpmig .wpmig-bar{height:16px;background:#f0f0f1;border:1px solid #dcdcde;border-radius:10px;overflow:hidden}
+.wpmig .wpmig-bar span{display:block;height:100%;width:0;background:#2271b1;transition:width .4s}
+.wpmig .wpmig-msg{color:#50575e}
+.wpmig .wpmig-badge{display:inline-block;min-width:60px;text-align:center;padding:0 8px;border-radius:10px;color:#fff;font-size:12px;font-weight:600}
+.wpmig .wpmig-ok{background:#00a32a}.wpmig .wpmig-warning{background:#dba617}.wpmig .wpmig-error{background:#d63638}
+.wpmig .wpmig-checks th{width:30%}
+.wpmig .wpmig-warning-text,.wpmig .wpmig-status-error{color:#b32d2e}
+.wpmig .wpmig-warnings{list-style:disc;padding-left:20px;max-height:240px;overflow:auto}
+.wpmig details{margin:8px 0}.wpmig summary{cursor:pointer;font-weight:600}
+.wpmig .wpmig-table-list{max-height:260px;overflow:auto;border:1px solid #dcdcde;padding:8px;margin-top:6px;background:#fbfbfb}
+.wpmig .wpmig-table-list label{display:block;margin:2px 0}
+.wpmig .wpmig-downloads .button-hero{margin:4px 8px 4px 0}
+.wpmig .wpmig-row-actions .button{margin:2px 0}
+.wpmig .wpmig-help ol{padding-left:20px}.wpmig .wpmig-help li{margin-bottom:8px}
+.wpmig .wpmig-error{margin-top:12px}
+@media (max-width:782px){.wpmig .wpmig-actions{justify-content:flex-start}}

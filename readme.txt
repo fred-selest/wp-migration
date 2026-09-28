@@ -1,0 +1,36 @@
+=== WP Migration ===
+Contributors: fred-selest
+Tags: migration, duplicate, clone, backup, move
+Requires at least: 4.9
+Tested up to: 7.1
+Requires PHP: 5.6
+Stable tag: 1.0.0
+License: GPLv2 or later
+License URI: https://www.gnu.org/licenses/gpl-2.0.html
+
+Copie un site WordPress complet (fichiers + base de données) vers un nouveau domaine et/ou un nouvel hébergement, avec un installeur autonome.
+
+== Description ==
+
+WP Migration crée un package (archive .wpmig + installer.php) à déposer sur le serveur de destination. L'installeur extrait les fichiers, importe la base de données, remplace les URL et chemins partout (y compris dans les données sérialisées et JSON), réécrit wp-config.php et .htaccess.
+
+* Traitement découpé en requêtes courtes et reprenable (hébergements mutualisés).
+* Remplacement des URL compatible sérialisation, JSON échappé et URL encodées.
+* Changement de préfixe de tables, bascule atomique des tables.
+* Compatibilité MySQL / MariaDB (collations, moteurs, max_allowed_packet).
+* Exclusion des caches, sauvegardes et composants propres aux hébergeurs.
+* Installeur protégé par mot de passe, suppression des fichiers d'installation.
+* Commandes WP-CLI (wp migration build) et installeur en ligne de commande.
+
+Multisite non pris en charge.
+
+== Installation ==
+
+1. Copier le dossier wp-migration dans wp-content/plugins/ puis activer l'extension.
+2. Menu WP Migration > Créer un package.
+3. Envoyer l'archive et installer.php sur le nouveau serveur puis ouvrir installer.php dans le navigateur.
+
+== Changelog ==
+
+= 1.0.0 =
+* Première version.

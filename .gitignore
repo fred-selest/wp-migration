@@ -1,0 +1,4 @@
+*.zip
+*.wpmig
+/vendor/
+.DS_Store
