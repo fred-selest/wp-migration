@@ -27,6 +27,9 @@ class WPMIG_Admin {
 		add_action( 'wp_ajax_wpmig_step', array( __CLASS__, 'ajax_step' ) );
 		add_action( 'wp_ajax_wpmig_build', array( __CLASS__, 'ajax_build' ) );
 		add_action( 'wp_ajax_wpmig_delete', array( __CLASS__, 'ajax_delete' ) );
+		add_action( 'wp_ajax_wpmig_transfer_link', array( __CLASS__, 'ajax_transfer_link' ) );
+		add_action( 'wp_ajax_wpmig_transfer_revoke', array( __CLASS__, 'ajax_transfer_revoke' ) );
+		add_action( 'wp_ajax_wpmig_import_prepare', array( __CLASS__, 'ajax_import_prepare' ) );
 		add_action( 'admin_post_wpmig_download', array( __CLASS__, 'download' ) );
 		add_action( 'admin_post_wpmig_cleanup_install', array( __CLASS__, 'cleanup_install' ) );
 		add_action( 'admin_init', array( __CLASS__, 'post_install' ) );
@@ -143,6 +146,44 @@ class WPMIG_Admin {
 		$package = self::request_package();
 		$package->delete();
 		wp_send_json_success();
+	}
+
+	/**
+	 * Create (or replace) the direct transfer link of a package.
+	 */
+	public static function ajax_transfer_link() {
+		self::check_ajax();
+		$package = self::request_package();
+		try {
+			wp_send_json_success( WPMIG_Transfer::create( $package ) );
+		} catch ( Exception $e ) {
+			wp_send_json_error( array( 'message' => $e->getMessage() ) );
+		}
+	}
+
+	/**
+	 * Revoke the direct transfer link of a package.
+	 */
+	public static function ajax_transfer_revoke() {
+		self::check_ajax();
+		WPMIG_Transfer::revoke( self::request_package() );
+		wp_send_json_success();
+	}
+
+	/**
+	 * Import: place the installer of the source package on this site.
+	 */
+	public static function ajax_import_prepare() {
+		self::check_ajax();
+		if ( ! current_user_can( 'install_plugins' ) ) {
+			wp_send_json_error( array( 'message' => 'Droits insuffisants : l\'import nécessite de pouvoir installer des extensions.' ) );
+		}
+		$link = isset( $_POST['link'] ) ? esc_url_raw( wp_unslash( $_POST['link'] ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification
+		try {
+			wp_send_json_success( array( 'url' => WPMIG_Transfer::prepare_import( $link ) ) );
+		} catch ( Exception $e ) {
+			wp_send_json_error( array( 'message' => $e->getMessage() ) );
+		}
 	}
 
 	/**
@@ -279,6 +320,7 @@ class WPMIG_Admin {
 
 		self::render_wizard();
 		self::render_packages();
+		self::render_import();
 		self::render_help();
 		echo '</div>';
 	}
@@ -405,6 +447,10 @@ class WPMIG_Admin {
 			echo '<td>' . esc_html( wpmig_date( $d['created'] ) ) . '</td>';
 			echo '<td>' . ( ! empty( $d['sizes']['archive'] ) ? esc_html( size_format( $d['sizes']['archive'], 1 ) ) : '—' ) . '</td>';
 			echo '<td>' . esc_html( isset( $labels[ $d['status'] ] ) ? $labels[ $d['status'] ] : $d['status'] );
+			$until = 'complete' === $d['status'] ? WPMIG_Transfer::active_until( $package ) : 0;
+			if ( $until ) {
+				echo '<br><span class="wpmig-transfer-active">Lien de transfert actif jusqu\'au ' . esc_html( wpmig_date( $until ) ) . '</span>';
+			}
 			if ( 'error' === $d['status'] && $d['error'] ) {
 				echo '<br><span class="wpmig-status-error">' . esc_html( $d['error'] ) . '</span>';
 			}
@@ -413,6 +459,7 @@ class WPMIG_Admin {
 				echo '<a class="button button-primary" data-download="archive" href="#">Archive</a> ';
 				echo '<a class="button button-primary" data-download="installer" href="#">Installeur</a> ';
 				echo '<button type="button" class="button" data-download="both">Les deux</button> ';
+				echo '<button type="button" class="button" data-transfer="1">Transfert direct</button> ';
 			} elseif ( in_array( $d['status'], array( 'scanning', 'scanned', 'building' ), true ) ) {
 				echo '<button type="button" class="button" data-resume="1">Reprendre</button> ';
 			}
@@ -420,6 +467,27 @@ class WPMIG_Admin {
 			echo '</td></tr>';
 		}
 		echo '</tbody></table></div>';
+	}
+
+	/**
+	 * Import from another site (direct transfer link).
+	 */
+	private static function render_import() {
+		if ( ! current_user_can( 'install_plugins' ) || ( defined( 'DISALLOW_FILE_MODS' ) && DISALLOW_FILE_MODS ) ) {
+			return;
+		}
+		?>
+		<div class="wpmig-card wpmig-import">
+			<h2>Importer un site sur ce WordPress</h2>
+			<p>Pour remplacer <strong>ce site</strong> par un autre sans passer par le FTP : sur le site d'origine, créez un package puis cliquez sur « Transfert direct », et collez ici le lien obtenu. L'installeur du package est placé sur ce serveur et récupère l'archive directement ; les accès à la base de données sont repris de ce site.</p>
+			<form id="wpmig-import-form" class="wpmig-copy">
+				<input type="url" id="wpmig-import-link" class="large-text code" required placeholder="https://site-origine.fr/wp-admin/admin-ajax.php?action=wpmig_transfer&amp;id=…&amp;key=…">
+				<button type="submit" class="button button-primary">Importer</button>
+			</form>
+			<p class="description">Attention : tous les contenus, réglages, extensions et comptes de ce site seront remplacés par ceux du site d'origine. Le mot de passe de l'installeur du package vous sera demandé.</p>
+			<div id="wpmig-import-msg"></div>
+		</div>
+		<?php
 	}
 
 	/**
@@ -436,24 +504,10 @@ class WPMIG_Admin {
 				<li>Ouvrez <code>https://nouveau-domaine.fr/installer.php</code> dans le navigateur et suivez les étapes : vérifications, base de données, installation. Les URL et chemins sont remplacés automatiquement, y compris dans les données sérialisées.</li>
 				<li>Connectez-vous avec vos identifiants habituels puis <strong>supprimez les fichiers d'installation</strong> (bouton proposé à la fin de l'installation et dans l'administration).</li>
 			</ol>
+			<p><strong>Transfert direct de serveur à serveur</strong> : au lieu d'envoyer l'archive par FTP, cliquez sur « Transfert direct » et déposez seulement <code>installer.php</code> sur le nouveau serveur ; l'installeur y télécharge l'archive directement depuis ce site, avec le lien secret et temporaire fourni.</p>
 			<p class="description">Accès SSH ? L'installeur fonctionne aussi en ligne de commande : <code>php installer.php --help</code>. Et le package peut être créé avec WP-CLI : <code>wp migration build</code>.</p>
 		</div>
 		<?php
 	}
 }
 
-if ( ! function_exists( 'wpmig_date' ) ) {
-	/**
-	 * Localized date (wp_date() only exists since WordPress 5.3).
-	 *
-	 * @param int $timestamp Timestamp.
-	 * @return string
-	 */
-	function wpmig_date( $timestamp ) {
-		$format = get_option( 'date_format' ) . ' ' . get_option( 'time_format' );
-		if ( function_exists( 'wp_date' ) ) {
-			return wp_date( $format, $timestamp );
-		}
-		return date_i18n( $format, $timestamp + (int) ( get_option( 'gmt_offset' ) * HOUR_IN_SECONDS ) );
-	}
-}

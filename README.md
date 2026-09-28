@@ -6,7 +6,7 @@ Extension WordPress pour **copier un site complet (fichiers + base de données) 
 2. on dépose ces deux fichiers sur le nouveau serveur (dossier vide ou WordPress existant) ;
 3. on ouvre `https://nouveau-domaine.fr/installer.php` : l'installeur extrait les fichiers, importe la base, remplace les URL et les chemins partout (y compris dans les données sérialisées), réécrit `wp-config.php` et `.htaccess`.
 
-WordPress n'a **pas** besoin d'être installé sur la destination.
+WordPress n'a **pas** besoin d'être installé sur la destination. S'il l'est déjà (installation « en un clic » de l'hébergeur), l'extension peut aussi **importer le site d'origine directement, sans FTP** : voir [Transfert direct](#transfert-direct-sans-ftp).
 
 ![Installeur : base de données et nouvelle adresse](docs/screenshots/7-installeur-base-de-donnees.png)
 
@@ -19,6 +19,12 @@ WordPress n'a **pas** besoin d'être installé sur la destination.
 | ![Configuration du package](docs/screenshots/1-creation-configuration.png) | ![Analyse du site](docs/screenshots/2-creation-analyse.png) |
 | **3. Package prêt** (archive, installeur et mot de passe) | **Liste des packages** |
 | ![Package prêt](docs/screenshots/3-creation-package-pret.png) | ![Liste des packages](docs/screenshots/4-liste-des-packages.png) |
+
+### Transfert direct de serveur à serveur
+
+| Lien secret sur le site d'origine | Import depuis un WordPress déjà installé |
+|---|---|
+| ![Lien de transfert direct](docs/screenshots/11-transfert-direct-lien.png) | ![Importer un site](docs/screenshots/12-importer-un-site.png) ![Installeur : récupération de l'archive](docs/screenshots/13-installeur-transfert-direct.png) |
 
 ### Sur le nouveau serveur : installeur
 
@@ -76,6 +82,21 @@ php installer.php --url=https://nouveau-domaine.fr --db-name=base --db-user=util
 php installer.php --help
 ```
 
+### Transfert direct (sans FTP)
+
+L'archive peut aller **directement du site d'origine au nouveau serveur**, sans passer par votre ordinateur ni par le FTP. Sur le site d'origine, **WP Migration → Packages → Transfert direct** crée un lien secret, valable 24 h et révocable. Ensuite, trois façons de l'utiliser :
+
+- **WordPress déjà installé sur la destination** (le cas le plus simple) : installez et activez WP Migration sur ce WordPress, collez le lien dans **WP Migration → Importer un site**. L'installeur du package est placé sur le serveur, récupère l'archive et reprend les accès à la base de données du `wp-config.php` existant. Le WordPress de destination est entièrement remplacé par le site d'origine : connectez-vous ensuite avec les identifiants du site d'origine.
+- **Dossier vide** : déposez seulement `installer.php` (quelques centaines de Ko), ouvrez-le et collez le lien quand il signale l'archive absente.
+- **En SSH** :
+
+```sh
+curl -o installer.php 'LIEN&file=installer'
+php installer.php --source-url='LIEN' --url=https://nouveau-domaine.fr --db-name=base --db-user=utilisateur --db-pass=secret
+```
+
+Le téléchargement se fait par morceaux de 8 Mo (requêtes HTTP `Range`) : il reprend après une coupure, fonctionne avec cURL ou, à défaut, les flux PHP, puis l'archive est contrôlée (package attendu, signature de fin, CRC de chaque bloc) avant toute modification. En ligne de commande sur le site d'origine : `wp migration transfer-link <id>` (`--hours=`, `--revoke`).
+
 ## Ce qui est géré automatiquement
 
 **Remplacement des URL et des chemins**
@@ -107,6 +128,8 @@ php installer.php --help
 
 - Dossier de stockage `wp-content/wpmig-backups` protégé (`.htaccess`, `web.config`, `index.php`) et noms de fichiers contenant un identifiant aléatoire (pour nginx) ; téléchargements servis par PHP après vérification des droits et d'un nonce.
 - Installeur protégé par un mot de passe généré automatiquement (seul un hachage salé est stocké), session liée à un jeton ; une installation lancée ne peut pas être reprise depuis un autre navigateur sans le mot de passe. Sans mot de passe, n'importe qui trouvant `installer.php` pourrait lancer l'installation avec sa propre base de données : c'est possible mais déconseillé, et signalé par l'installeur.
+- Lien de transfert direct : jeton aléatoire de 128 bits (seul son hachage est conservé), valable 24 h, révocable, un seul lien actif par package, chaque téléchargement est journalisé (adresse IP) ; la même erreur 403 est renvoyée pour un package inconnu ou une clé fausse. L'import depuis l'administration exige le droit d'installer des extensions et respecte `DISALLOW_FILE_MODS`.
+- La sauvegarde du `wp-config.php` remplacé est un fichier `.php` qui s'arrête immédiatement : elle n'est jamais lisible depuis le web.
 - L'installeur propose de se supprimer avec l'archive à la fin ; l'administration du nouveau site affiche un avertissement tant que des fichiers d'installation subsistent.
 
 ## Dépannage

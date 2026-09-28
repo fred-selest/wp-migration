@@ -213,6 +213,56 @@
 		$( '[data-action="build"]', actions ).disabled = blocking;
 	}
 
+	/* Direct server to server transfer panel. */
+	function transferPanel( id, container ) {
+		container.innerHTML = '<p class="description">Création du lien…</p>';
+		return post( 'wpmig_transfer_link', { id: id } ).then( function ( link ) {
+			var html = '<div class="wpmig-transfer">';
+			html += '<h3>Transfert direct de serveur à serveur</h3>';
+			if ( link.insecure ) {
+				html += '<div class="notice notice-warning inline"><p>Ce site n\'est pas en HTTPS : l\'archive transitera en clair.</p></div>';
+			}
+			html += '<p>Déposez seulement <code>installer.php</code> sur le nouveau serveur et ouvrez-le : il propose de récupérer l\'archive depuis ce site. Collez-y ce lien secret, valable jusqu\'au <strong>' + esc( link.expires_h ) + '</strong> :</p>';
+			html += '<p class="wpmig-copy"><input type="text" class="large-text code" readonly value="' + esc( link.url ) + '"> <button type="button" class="button" data-copy="1">Copier</button></p>';
+			html += '<details><summary>En SSH</summary><pre class="wpmig-pre">curl -o installer.php \'' + esc( link.installer_url ) + '\'\nphp installer.php --source-url=\'' + esc( link.url ) + '\' \\\n  --url=https://nouveau-site.fr --db-name=base --db-user=utilisateur --db-pass=secret</pre></details>';
+			html += '<p class="description">Toute personne possédant ce lien peut télécharger une copie complète du site : ne le partagez pas et révoquez-le une fois la migration terminée. Créer un nouveau lien invalide le précédent.</p>';
+			html += '<p><button type="button" class="button button-link-delete" data-revoke="' + esc( id ) + '">Révoquer le lien</button></p>';
+			html += '</div>';
+			container.innerHTML = html;
+		} ).catch( function ( err ) {
+			container.innerHTML = '<div class="notice notice-error inline"><p>' + esc( err.message ) + '</p></div>';
+		} );
+	}
+
+	/* Copy / revoke buttons of the transfer panels. */
+	document.addEventListener( 'click', function ( e ) {
+		var target = e.target;
+		if ( target.getAttribute( 'data-copy' ) ) {
+			var input = target.parentNode.querySelector( 'input' );
+			input.select();
+			var done = function () {
+				target.textContent = 'Copié !';
+				setTimeout( function () {
+					target.textContent = 'Copier';
+				}, 2000 );
+			};
+			if ( navigator.clipboard && window.isSecureContext ) {
+				navigator.clipboard.writeText( input.value ).then( done );
+			} else {
+				document.execCommand( 'copy' );
+				done();
+			}
+		} else if ( target.getAttribute( 'data-revoke' ) ) {
+			target.disabled = true;
+			post( 'wpmig_transfer_revoke', { id: target.getAttribute( 'data-revoke' ) } ).then( function () {
+				target.closest( '.wpmig-transfer' ).innerHTML = '<p>Lien révoqué : il ne permet plus aucun téléchargement.</p>';
+			} ).catch( function ( err ) {
+				target.disabled = false;
+				window.alert( err.message );
+			} );
+		}
+	} );
+
 	function downloadUrl( id, file ) {
 		return WPMIG.download + '&id=' + encodeURIComponent( id ) + '&file=' + file;
 	}
@@ -238,8 +288,13 @@
 			} );
 			html += '</ul></details>';
 		}
-		html += '<p><a class="button" href="">Retour à la liste des packages</a></p>';
+		html += '<p><button type="button" class="button" id="wpmig-result-transfer">Transfert direct de serveur à serveur</button> <a class="button" href="">Retour à la liste des packages</a></p>';
+		html += '<div id="wpmig-result-transfer-panel"></div>';
 		$( '.wpmig-result', panel ).innerHTML = html;
+		$( '#wpmig-result-transfer', panel ).addEventListener( 'click', function () {
+			this.disabled = true;
+			transferPanel( state.id, $( '#wpmig-result-transfer-panel', panel ) );
+		} );
 		$( '.wpmig-progress', panel ).hidden = true;
 	}
 
@@ -304,6 +359,27 @@
 		}
 	} );
 
+	/* Import from another site. */
+	var importForm = document.getElementById( 'wpmig-import-form' );
+	if ( importForm ) {
+		importForm.addEventListener( 'submit', function ( e ) {
+			e.preventDefault();
+			var box = document.getElementById( 'wpmig-import-msg' );
+			var button = importForm.querySelector( 'button' );
+			if ( ! window.confirm( 'Ce site va être entièrement remplacé par le site d\'origine (contenus, réglages, extensions, comptes). Continuer ?' ) ) {
+				return;
+			}
+			button.disabled = true;
+			box.innerHTML = '<p class="description">Récupération de l\'installeur…</p>';
+			post( 'wpmig_import_prepare', { link: document.getElementById( 'wpmig-import-link' ).value } ).then( function ( res ) {
+				window.location.href = res.url;
+			} ).catch( function ( err ) {
+				button.disabled = false;
+				box.innerHTML = '<div class="notice notice-error inline"><p>' + esc( err.message ) + '</p></div>';
+			} );
+		} );
+	}
+
 	/* Package list actions. */
 	var list = document.querySelector( '.wpmig-packages' );
 	if ( list ) {
@@ -325,6 +401,19 @@
 				} else {
 					window.location.href = downloadUrl( id, dl );
 				}
+				return;
+			}
+			if ( target.getAttribute( 'data-transfer' ) ) {
+				var existing = row.nextElementSibling;
+				if ( existing && existing.classList.contains( 'wpmig-transfer-row' ) ) {
+					existing.parentNode.removeChild( existing );
+					return;
+				}
+				var tr = document.createElement( 'tr' );
+				tr.className = 'wpmig-transfer-row';
+				tr.innerHTML = '<td colspan="5"></td>';
+				row.parentNode.insertBefore( tr, row.nextSibling );
+				transferPanel( id, tr.firstChild );
 				return;
 			}
 			if ( target.getAttribute( 'data-delete' ) ) {

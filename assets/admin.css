@@ -20,5 +20,11 @@
 .wpmig .wpmig-row-actions .button{margin:2px 0}
 .wpmig .wpmig-help ol{padding-left:20px}.wpmig .wpmig-help li{margin-bottom:8px}
 .wpmig .wpmig-error{margin-top:12px}
+.wpmig .wpmig-transfer{background:#f6f7f7;border:1px solid #dcdcde;border-radius:4px;padding:4px 16px;margin:8px 0}
+.wpmig .wpmig-transfer h3{margin:12px 0 8px}
+.wpmig .wpmig-copy{display:flex;gap:8px}
+.wpmig .wpmig-pre{background:#1d2327;color:#f0f0f1;padding:10px 12px;border-radius:4px;white-space:pre-wrap;word-break:break-all}
+.wpmig .wpmig-transfer-row td{max-width:0}
+.wpmig .wpmig-transfer-active{color:#00a32a;font-size:12px}
 .wpmig code.wpmig-password{font-size:15px;padding:3px 8px;user-select:all}
 @media (max-width:782px){.wpmig .wpmig-actions{justify-content:flex-start}}

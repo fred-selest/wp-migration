@@ -1811,8 +1811,11 @@ class WPMIG_Installer {
 
 		$target = $this->root . '/wp-config.php';
 		if ( is_file( $target ) ) {
-			$backup = $target . '.wpmig-backup-' . gmdate( 'Ymd-His' );
-			if ( @copy( $target, $backup ) ) {
+			// A .php file that stops at once: never served as text (it holds database credentials).
+			$backup = $this->root . '/wp-config-sauvegarde-' . gmdate( 'Ymd-His' ) . '.php';
+			$guard  = "<?php exit; // Sauvegarde WP Migration du wp-config.php remplacé le " . gmdate( 'Y-m-d H:i:s' ) . " UTC. ?>\n";
+			if ( false !== @file_put_contents( $backup, $guard . (string) @file_get_contents( $target ) ) ) {
+				@chmod( $backup, 0600 );
 				$this->state['notices'][] = 'wp-config.php existant sauvegardé : ' . basename( $backup );
 			}
 		}
@@ -1927,6 +1930,273 @@ class WPMIG_Installer {
 			'time'  => $this->state['finished'] - $this->state['started'],
 		);
 		$this->log( 'Installation terminée en ' . $this->state['result']['time'] . ' s.' );
+	}
+
+	/* ------------------------------------------------------------------ */
+	/* Direct transfer from the source site                                */
+	/* ------------------------------------------------------------------ */
+
+	/**
+	 * Partial download file.
+	 *
+	 * @return string
+	 */
+	private function download_part() {
+		return $this->data_dir . '/archive.part';
+	}
+
+	/**
+	 * GET a byte range.
+	 *
+	 * @param string $url   URL.
+	 * @param float  $start First byte.
+	 * @param float  $end   Last byte.
+	 * @return array array( 'status' => int, 'body' => string, 'total' => float|null ).
+	 * @throws WPMIG_Exception On network error.
+	 */
+	private function http_range( $url, $start, $end ) {
+		$range = sprintf( '%.0f-%.0f', $start, $end );
+		if ( function_exists( 'curl_init' ) ) {
+			$headers = array();
+			$ch      = curl_init( $url );
+			curl_setopt( $ch, CURLOPT_RETURNTRANSFER, true );
+			curl_setopt( $ch, CURLOPT_RANGE, $range );
+			curl_setopt( $ch, CURLOPT_FOLLOWLOCATION, true );
+			curl_setopt( $ch, CURLOPT_MAXREDIRS, 5 );
+			curl_setopt( $ch, CURLOPT_CONNECTTIMEOUT, 20 );
+			curl_setopt( $ch, CURLOPT_TIMEOUT, 180 );
+			curl_setopt( $ch, CURLOPT_USERAGENT, 'WP-Migration-Installer/' . WPMIG_INSTALLER );
+			curl_setopt( $ch, CURLOPT_ENCODING, 'identity' );
+			if ( defined( 'CURLOPT_PROTOCOLS' ) ) {
+				curl_setopt( $ch, CURLOPT_PROTOCOLS, CURLPROTO_HTTP | CURLPROTO_HTTPS );
+				curl_setopt( $ch, CURLOPT_REDIR_PROTOCOLS, CURLPROTO_HTTP | CURLPROTO_HTTPS );
+			}
+			curl_setopt(
+				$ch,
+				CURLOPT_HEADERFUNCTION,
+				function ( $ch, $line ) use ( &$headers ) {
+					if ( preg_match( '/^HTTP\//', $line ) ) {
+						$headers = array(); // New response after a redirection.
+					}
+					$headers[] = trim( $line );
+					return strlen( $line );
+				}
+			);
+			$body = curl_exec( $ch );
+			if ( false === $body ) {
+				$error = curl_error( $ch );
+				if ( PHP_VERSION_ID < 80000 ) {
+					curl_close( $ch );
+				}
+				throw new WPMIG_Exception( 'Téléchargement impossible : ' . $error );
+			}
+			$status = (int) curl_getinfo( $ch, CURLINFO_HTTP_CODE );
+			if ( PHP_VERSION_ID < 80000 ) {
+				curl_close( $ch ); // No-op since PHP 8.0, deprecated in 8.5.
+			}
+		} elseif ( ini_get( 'allow_url_fopen' ) ) {
+			$context = stream_context_create(
+				array(
+					'http' => array(
+						'method'          => 'GET',
+						'header'          => "Range: bytes=" . $range . "\r\nUser-Agent: WP-Migration-Installer/" . WPMIG_INSTALLER . "\r\n",
+						'timeout'         => 180,
+						'ignore_errors'   => true,
+						'follow_location' => 1,
+						'max_redirects'   => 5,
+					),
+				)
+			);
+			$body     = @file_get_contents( $url, false, $context );
+			$response = function_exists( 'http_get_last_response_headers' ) ? http_get_last_response_headers() : ( isset( $http_response_header ) ? $http_response_header : array() );
+			if ( false === $body || empty( $response ) ) {
+				throw new WPMIG_Exception( 'Téléchargement impossible (vérifiez l\'adresse et que ce serveur peut accéder à Internet).' );
+			}
+			$headers = array();
+			foreach ( $response as $line ) {
+				if ( preg_match( '/^HTTP\//', $line ) ) {
+					$headers = array();
+				}
+				$headers[] = $line;
+			}
+			$status = preg_match( '/^HTTP\/\S+\s+(\d+)/', $headers[0], $m ) ? (int) $m[1] : 0;
+		} else {
+			throw new WPMIG_Exception( 'Ce serveur ne peut pas télécharger de fichier (ni cURL ni allow_url_fopen) : envoyez l\'archive par FTP.' );
+		}
+		$total = null;
+		foreach ( $headers as $line ) {
+			if ( preg_match( '/^Content-Range:\s*bytes\s+\d+-\d+\/(\d+)/i', $line, $m ) ) {
+				$total = (float) $m[1];
+			}
+		}
+		return array(
+			'status' => $status,
+			'body'   => (string) $body,
+			'total'  => $total,
+		);
+	}
+
+	/**
+	 * Explain a failed HTTP answer.
+	 *
+	 * @param array $res Response.
+	 * @return string
+	 */
+	private function http_error( array $res ) {
+		switch ( $res['status'] ) {
+			case 403:
+				return 'Lien refusé par le site d\'origine : il est invalide, expiré ou révoqué. Créez un nouveau lien depuis WP Migration > Packages > Transfert direct.';
+			case 404:
+				return 'Package introuvable sur le site d\'origine (supprimé ?).';
+			case 200:
+				return 'Le serveur d\'origine ne gère pas les téléchargements partiels : vérifiez que le lien est bien celui de WP Migration, ou envoyez l\'archive par FTP.';
+		}
+		$text = trim( preg_replace( '/\s+/', ' ', strip_tags( substr( $res['body'], 0, 2000 ) ) ) );
+		return 'Réponse inattendue du site d\'origine (HTTP ' . $res['status'] . ')' . ( '' !== $text ? ' : ' . self::utf8( substr( $text, 0, 200 ) ) : '.' );
+	}
+
+	/**
+	 * Start downloading the archive from a transfer link.
+	 *
+	 * @param string $url Link created on the source site.
+	 * @throws WPMIG_Exception On invalid link.
+	 */
+	private function download_start( $url ) {
+		if ( 'new' !== $this->state['status'] ) {
+			throw new WPMIG_Exception( 'Une installation est déjà en cours ou terminée.' );
+		}
+		if ( $this->archive_path() ) {
+			throw new WPMIG_Exception( 'L\'archive est déjà présente sur ce serveur.' );
+		}
+		$url = trim( $url );
+		if ( ! preg_match( '#^https?://[^\s]+$#i', $url ) ) {
+			throw new WPMIG_Exception( 'Collez le lien de transfert complet (il commence par https://).' );
+		}
+		// The installer link was pasted instead of the archive one.
+		$url = preg_replace( '/([?&])file=installer(&|$)/', '$1', $url );
+		$url = rtrim( $url, '&?' );
+		// Links name their package: refuse another package before downloading anything.
+		$query = (string) parse_url( $url, PHP_URL_QUERY );
+		parse_str( $query, $args );
+		if ( ! empty( $args['id'] ) && ! empty( $this->config['package'] ) && $args['id'] !== $this->config['package'] ) {
+			throw new WPMIG_Exception( 'Ce lien correspond à un autre package (' . $args['id'] . ') que cet installeur (' . $this->config['package'] . ') : utilisez l\'installer.php du même package.' );
+		}
+
+		$res = $this->http_range( $url, 0, 15 );
+		if ( 206 !== $res['status'] || null === $res['total'] ) {
+			throw new WPMIG_Exception( $this->http_error( $res ) );
+		}
+		if ( WPMIG_Archive::ENTRY_MAGIC !== substr( $res['body'], 0, 4 ) ) {
+			throw new WPMIG_Exception( 'Ce lien ne renvoie pas une archive WP Migration.' );
+		}
+		$size = $res['total'];
+		$free = function_exists( 'disk_free_space' ) ? @disk_free_space( $this->root ) : false;
+		if ( false !== $free && $free < $size * 1.1 ) {
+			throw new WPMIG_Exception( 'Espace disque insuffisant : ' . self::size( $free ) . ' libres pour une archive de ' . self::size( $size ) . ' (sans compter l\'extraction).' );
+		}
+		@unlink( $this->download_part() );
+		$this->state['download'] = array(
+			'url'     => $url,
+			'size'    => $size,
+			'offset'  => 0,
+			'started' => time(),
+		);
+		$this->log( 'Transfert direct : archive de ' . self::size( $size ) . ' depuis ' . preg_replace( '/([?&]key=)[a-f0-9]+/i', '$1…', $url ) );
+		$this->save_state();
+	}
+
+	/**
+	 * Download the next chunks until $deadline.
+	 *
+	 * @param float $deadline Microtime or 0.
+	 * @return bool True when the archive is complete and in place.
+	 * @throws WPMIG_Exception On error.
+	 */
+	private function download_step( $deadline ) {
+		$d = &$this->state['download'];
+		if ( empty( $d['url'] ) ) {
+			throw new WPMIG_Exception( 'Aucun téléchargement en cours.' );
+		}
+		$fh = @fopen( $this->download_part(), 'c+b' );
+		if ( ! $fh ) {
+			throw new WPMIG_Exception( 'Impossible d\'écrire l\'archive dans ' . $this->data_dir . '.' );
+		}
+		ftruncate( $fh, (int) $d['offset'] );
+		fseek( $fh, 0, SEEK_END );
+		$chunk = 8388608;
+		while ( $d['offset'] < $d['size'] ) {
+			$end = min( $d['size'], $d['offset'] + $chunk ) - 1;
+			$res = $this->http_range( $d['url'], $d['offset'], $end );
+			if ( 206 !== $res['status'] ) {
+				fclose( $fh );
+				throw new WPMIG_Exception( $this->http_error( $res ) );
+			}
+			if ( null !== $res['total'] && (float) $res['total'] !== (float) $d['size'] ) {
+				fclose( $fh );
+				unset( $this->state['download'] );
+				$this->save_state();
+				throw new WPMIG_Exception( 'L\'archive a changé sur le site d\'origine pendant le téléchargement : relancez-le.' );
+			}
+			$len = strlen( $res['body'] );
+			if ( $len !== (int) ( $end - $d['offset'] + 1 ) ) {
+				fclose( $fh );
+				throw new WPMIG_Exception( 'Morceau incomplet reçu (' . $len . ' octets) : nouvelle tentative nécessaire.' );
+			}
+			if ( false === fwrite( $fh, $res['body'] ) ) {
+				fclose( $fh );
+				throw new WPMIG_Exception( 'Erreur d\'écriture de l\'archive (espace disque insuffisant ?).' );
+			}
+			fflush( $fh );
+			$d['offset'] += $len;
+			$this->save_state();
+			if ( $deadline && microtime( true ) >= $deadline ) {
+				break;
+			}
+		}
+		fclose( $fh );
+		if ( $d['offset'] < $d['size'] ) {
+			return false;
+		}
+
+		// Complete: check it is the archive of this package before putting it in place.
+		$part     = $this->download_part();
+		$manifest = WPMIG_Archive::read_trailer( $part ) ? $this->read_manifest_from( $part ) : null;
+		if ( ! $manifest ) {
+			@unlink( $part );
+			unset( $this->state['download'] );
+			$this->save_state();
+			throw new WPMIG_Exception( 'Archive téléchargée incomplète ou illisible : relancez le téléchargement.' );
+		}
+		if ( ! empty( $this->config['package'] ) && $manifest['package'] !== $this->config['package'] ) {
+			@unlink( $part );
+			unset( $this->state['download'] );
+			$this->save_state();
+			throw new WPMIG_Exception( 'Ce lien correspond à un autre package (' . $manifest['package'] . ') que cet installeur (' . $this->config['package'] . ') : utilisez l\'installer.php du même package.' );
+		}
+		$target = $this->root . '/' . ( ! empty( $this->config['archive'] ) ? $this->config['archive'] : $manifest['name'] . '_' . $manifest['package'] . '_archive.wpmig' );
+		if ( ! @rename( $part, $target ) && ! ( @copy( $part, $target ) && @unlink( $part ) ) ) {
+			throw new WPMIG_Exception( 'Impossible de placer l\'archive dans ' . $this->root . '.' );
+		}
+		$this->log( 'Transfert direct terminé en ' . ( time() - $d['started'] ) . ' s.' );
+		unset( $this->state['download'] );
+		$this->save_state();
+		return true;
+	}
+
+	/**
+	 * Download progress for the browser.
+	 *
+	 * @return array|null
+	 */
+	private function download_state() {
+		if ( empty( $this->state['download']['url'] ) ) {
+			return null;
+		}
+		$d = $this->state['download'];
+		return array(
+			'progress' => $d['size'] > 0 ? (int) floor( 100 * $d['offset'] / $d['size'] ) : 0,
+			'message'  => 'Téléchargement de l\'archive… ' . self::size( $d['offset'] ) . ' / ' . self::size( $d['size'] ),
+		);
 	}
 
 	/**
@@ -2083,6 +2353,25 @@ class WPMIG_Installer {
 			}
 			switch ( $action ) {
 				case 'info':
+					if ( ! $this->archive_path() ) {
+						// No archive yet: offer the direct transfer from the source site.
+						$this->json(
+							array(
+								'ok'       => true,
+								'missing'  => true,
+								'package'  => array(
+									'name'    => isset( $this->config['name'] ) ? $this->config['name'] : '',
+									'home'    => isset( $this->config['source_url'] ) ? $this->config['source_url'] : '',
+									'created' => isset( $this->config['created'] ) ? $this->config['created'] : '',
+									'archive' => isset( $this->config['archive'] ) ? $this->config['archive'] : '',
+								),
+								'download' => $this->download_state(),
+								'can_http' => function_exists( 'curl_init' ) || (bool) ini_get( 'allow_url_fopen' ),
+								'state'    => $this->public_state(),
+							)
+						);
+						return;
+					}
 					$manifest = $this->manifest();
 					$checks   = $this->checks();
 					$defaults = array_merge(
@@ -2169,6 +2458,48 @@ class WPMIG_Installer {
 					);
 					return;
 
+				case 'download_start':
+					$this->download_start( isset( $post['source_url'] ) ? (string) $post['source_url'] : '' );
+					$this->json(
+						array(
+							'ok'       => true,
+							'download' => $this->download_state(),
+						)
+					);
+					return;
+
+				case 'download_step':
+					$lock = @fopen( $this->data_dir . '/step.lock', 'c' );
+					if ( $lock && ! flock( $lock, LOCK_EX | LOCK_NB ) ) {
+						fclose( $lock );
+						$this->json(
+							array(
+								'ok'   => true,
+								'busy' => true,
+							)
+						);
+						return;
+					}
+					$this->load_state();
+					$this->raise_limits();
+					$budget = $this->budget();
+					$done   = $this->download_step( $budget ? microtime( true ) + $budget : 0 );
+					$this->json(
+						array(
+							'ok'       => true,
+							'done'     => $done,
+							'download' => $this->download_state(),
+						)
+					);
+					return;
+
+				case 'download_cancel':
+					unset( $this->state['download'] );
+					@unlink( $this->download_part() );
+					$this->save_state();
+					$this->json( array( 'ok' => true ) );
+					return;
+
 				case 'cleanup':
 					if ( 'complete' !== $this->state['status'] ) {
 						throw new WPMIG_Exception( 'L\'installation n\'est pas terminée.' );
@@ -2253,7 +2584,7 @@ class WPMIG_Installer {
 	private function cli_main() {
 		$opts = getopt(
 			'h',
-			array( 'help', 'db-host:', 'db-name:', 'db-user:', 'db-pass:', 'db-prefix:', 'db-action:', 'db-create', 'url:', 'home-url:', 'skip-files', 'new-salts', 'keep-guid', 'no-www-variant', 'skip-verify', 'admin-user:', 'admin-pass:', 'admin-email:', 'replace:', 'cleanup', 'check' )
+			array( 'help', 'db-host:', 'db-name:', 'db-user:', 'db-pass:', 'db-prefix:', 'db-action:', 'db-create', 'url:', 'home-url:', 'skip-files', 'new-salts', 'keep-guid', 'no-www-variant', 'skip-verify', 'admin-user:', 'admin-pass:', 'admin-email:', 'replace:', 'source-url:', 'cleanup', 'check' )
 		);
 		$out = function ( $msg ) {
 			fwrite( STDOUT, $msg . "\n" );
@@ -2275,6 +2606,7 @@ class WPMIG_Installer {
 			$out( '  --skip-verify            Ne vérifie pas toute l\'archive avant de l\'installer' );
 			$out( '  --admin-user=, --admin-pass=, --admin-email=   Crée/réinitialise un administrateur' );
 			$out( '  --replace="ancien=>nouveau"   Remplacement supplémentaire (répétable)' );
+			$out( '  --source-url=LIEN        Télécharge d\'abord l\'archive depuis le site d\'origine (lien « Transfert direct »)' );
 			$out( '  --check                  Affiche uniquement les vérifications' );
 			$out( '  --cleanup                Supprime l\'installeur, l\'archive et les fichiers temporaires à la fin' );
 			return 0;
@@ -2282,6 +2614,21 @@ class WPMIG_Installer {
 		try {
 			$this->ensure_data_dir();
 			$this->load_state();
+			if ( ! $this->archive_path() && ( isset( $opts['source-url'] ) || ! empty( $this->state['download']['url'] ) ) ) {
+				if ( empty( $this->state['download']['url'] ) ) {
+					$this->download_start( is_array( $opts['source-url'] ) ? end( $opts['source-url'] ) : $opts['source-url'] );
+				}
+				$out( 'Transfert direct de l\'archive (' . self::size( $this->state['download']['size'] ) . ')…' );
+				$last = -1;
+				while ( ! $this->download_step( microtime( true ) + 5 ) ) {
+					$dl = $this->download_state();
+					if ( $dl['progress'] >= $last + 10 ) {
+						$out( '  ' . $dl['message'] );
+						$last = $dl['progress'];
+					}
+				}
+				$out( '  Archive téléchargée et contrôlée.' );
+			}
 			$manifest = $this->manifest();
 			$out( 'WP Migration — ' . $manifest['site']['home'] . ' (WordPress ' . $manifest['site']['wp_version'] . ', ' . $manifest['created'] . ' UTC)' );
 			$checks = $this->checks();
@@ -2513,10 +2860,83 @@ ul.list{margin:6px 0;padding-left:20px}
 		api('info').then(function (r) {
 			if (!r.ok) { app.innerHTML = '<div class="card">' + msg('error', r.error) + '</div>'; return; }
 			info = r;
+			if (r.missing) { renderMissing(r); return; }
 			if (r.state.status === 'running') { renderProgress(); run(); }
 			else if (r.state.status === 'complete') { renderDone(r.state); }
 			else { renderChecks(); }
 		}).catch(function (e) { app.innerHTML = '<div class="card">' + msg('error', e.message) + '</div>'; });
+	}
+
+	function renderMissing(r) {
+		setStep(1);
+		var p = r.package;
+		app.innerHTML =
+			'<div class="card"><h2>Archive absente</h2>' +
+			'<p>L\'archive <code>' + esc(p.archive) + '</code> n\'est pas dans ce dossier. Deux possibilités :</p>' +
+			'<ul class="list"><li>l\'envoyer par FTP/SFTP (en mode binaire) à côté de <code>installer.php</code>, puis <a href="">recharger cette page</a> ;</li>' +
+			'<li><strong>la récupérer directement depuis le site d\'origine</strong>, sans passer par votre ordinateur.</li></ul></div>' +
+			'<div class="card"><h2>Transfert direct depuis ' + esc(p.home) + '</h2>' +
+			(r.can_http ? '' : msg('error', 'Ce serveur ne peut pas télécharger de fichier (ni cURL ni allow_url_fopen) : utilisez le FTP.')) +
+			'<p class="hint" style="margin-top:-6px">Sur le site d\'origine : <strong>WP Migration → Packages → Transfert direct</strong>, puis copiez le lien affiché.</p>' +
+			'<form id="dlform"><label for="f_source_url">Lien de transfert</label>' +
+			'<input type="url" id="f_source_url" required placeholder="' + esc(p.home) + '/wp-admin/admin-ajax.php?action=wpmig_transfer&amp;id=…&amp;key=…">' +
+			'<div id="dlmsg"></div>' +
+			'<div id="dlprogress" class="hidden"><div class="bar"><span id="dlbar"></span></div><div class="progress-label"><span id="dlstatus"></span><span id="dlpct"></span></div>' +
+			'<p class="hint">Vous pouvez fermer cette page : le téléchargement reprendra où il s\'était arrêté.</p></div>' +
+			'<div class="actions"><button type="button" id="dlcancel" class="hidden">Annuler</button><button class="primary" type="submit" id="dlgo"' + (r.can_http ? '' : ' disabled') + '>Récupérer l\'archive</button></div></form></div>';
+		document.getElementById('dlform').onsubmit = function (e) {
+			e.preventDefault();
+			var go = document.getElementById('dlgo');
+			go.disabled = true;
+			document.getElementById('dlmsg').innerHTML = '';
+			api('download_start', { source_url: document.getElementById('f_source_url').value }).then(function (res) {
+				if (!res.ok) { go.disabled = false; document.getElementById('dlmsg').innerHTML = msg('error', res.error); return; }
+				downloadLoop(res.download);
+			}).catch(function (err) { go.disabled = false; document.getElementById('dlmsg').innerHTML = msg('error', err.message); });
+		};
+		document.getElementById('dlcancel').onclick = function () {
+			api('download_cancel').then(function () { location.reload(); });
+		};
+		var fromUrl = new URLSearchParams(window.location.search).get('source_url');
+		if (fromUrl) { document.getElementById('f_source_url').value = fromUrl; }
+		if (r.download) { downloadLoop(r.download); }
+	}
+
+	function downloadLoop(d) {
+		document.getElementById('dlprogress').className = '';
+		document.getElementById('dlcancel').className = '';
+		document.getElementById('dlgo').disabled = true;
+		document.getElementById('f_source_url').disabled = true;
+		function show(state) {
+			document.getElementById('dlbar').style.width = state.progress + '%';
+			document.getElementById('dlpct').textContent = state.progress + ' %';
+			document.getElementById('dlstatus').textContent = state.message;
+		}
+		show(d);
+		var tries = 0;
+		(function next() {
+			api('download_step').then(function (res) {
+				if (!res.ok) { throw Object.assign(new Error(res.error), { fatal: !!res.error && res.error.indexOf('Morceau') < 0 && res.error.indexOf('impossible :') < 0 }); }
+				tries = 0;
+				document.getElementById('dlmsg').innerHTML = '';
+				if (res.done) {
+					document.getElementById('dlmsg').innerHTML = msg('ok', 'Archive téléchargée et contrôlée.');
+					setTimeout(loadInfo, 800);
+					return;
+				}
+				if (res.download) { show(res.download); }
+				setTimeout(next, res.busy ? 3000 : 100);
+			}).catch(function (err) {
+				tries++;
+				if (!err.fatal && tries <= 6) {
+					document.getElementById('dlmsg').innerHTML = msg('warning', 'Problème temporaire (' + err.message + '). Nouvelle tentative ' + tries + '/6…');
+					setTimeout(next, 2000 * tries);
+					return;
+				}
+				document.getElementById('dlmsg').innerHTML = msg('error', err.message) + '<div class="actions"><button type="button" id="dlretry">Réessayer</button></div>';
+				document.getElementById('dlretry').onclick = function () { tries = 0; document.getElementById('dlmsg').innerHTML = ''; next(); };
+			});
+		})();
 	}
 
 	function renderChecks() {

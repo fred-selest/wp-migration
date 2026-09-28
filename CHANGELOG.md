@@ -3,6 +3,16 @@
 Toutes les évolutions notables de WP Migration sont consignées ici.
 Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le projet respecte le [versionnage sémantique](https://semver.org/lang/fr/).
 
+## [Non publié]
+
+### Ajouté
+- Transfert direct de serveur à serveur : lien secret, temporaire (24 h) et révocable créé sur le site d'origine (bouton « Transfert direct », `wp migration transfer-link`) ; l'installeur y télécharge l'archive par morceaux reprenables (cURL ou flux PHP) et la contrôle avant toute modification (`--source-url` en ligne de commande).
+- « Importer un site » : depuis un WordPress déjà installé sur la destination, coller le lien suffit ; l'installeur du package est placé sur le serveur et les accès à la base de données sont repris du `wp-config.php` existant.
+
+### Corrigé
+- Sécurité : la sauvegarde du `wp-config.php` remplacé (`wp-config.php.wpmig-backup-…`) pouvait être lue depuis le web avec les identifiants MySQL. Elle est désormais enregistrée sous forme de fichier `.php` inerte, et les anciennes sauvegardes sont signalées dans l'administration pour suppression.
+- `wp migration list --format=ids` affichait « Array ».
+
 ## [1.1.0] - 2026-09-28
 
 ### Ajouté
