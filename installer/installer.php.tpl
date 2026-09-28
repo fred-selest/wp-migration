@@ -13,7 +13,7 @@
  * @package WPMigration
  */
 
-define( 'WPMIG_INSTALLER', '1.2.0' );
+define( 'WPMIG_INSTALLER', '1.3.0' );
 
 @ini_set( 'display_errors', '0' ); // phpcs:ignore
 error_reporting( E_ALL & ~E_DEPRECATED & ~E_NOTICE & ~E_WARNING );
@@ -1288,6 +1288,12 @@ class WPMIG_Installer {
 					break;
 				case 'database':
 					if ( $this->step_database( $deadline ) ) {
+						$this->state['step']    = 'db_check';
+						$this->state['message'] = 'Contrôle des tables importées…';
+					}
+					break;
+				case 'db_check':
+					if ( $this->step_db_check( $deadline ) ) {
 						$this->state['step']    = 'db_fix';
 						$this->state['message'] = 'Mise à jour des réglages…';
 					}
@@ -1346,11 +1352,14 @@ class WPMIG_Installer {
 		}
 		$size   = max( 1, filesize( $archive ) );
 		$reader = new WPMIG_Archive_Reader( $archive, $st['offset'] );
+		$first  = true;
 		try {
 			while ( true ) {
-				if ( $deadline && microtime( true ) >= $deadline ) {
+				// At least one unit of work per request, whatever the time left.
+				if ( ! $first && $deadline && microtime( true ) >= $deadline ) {
 					break;
 				}
+				$first = false;
 				if ( ! $st['in_file'] ) {
 					$entry = $reader->next_entry();
 					if ( null === $entry ) {
@@ -1417,11 +1426,14 @@ class WPMIG_Installer {
 		$self_names = array( basename( $this->file ) => true, basename( $archive ) => true, basename( $this->data_dir ) => true );
 		$renamed    = array( '.htaccess' => true, '.user.ini' => true, 'php.ini' => true, 'wp-config.php' => true );
 		$last_save  = microtime( true );
+		$first      = true;
 
 		while ( true ) {
-			if ( $deadline && microtime( true ) >= $deadline ) {
+			// At least one unit of work per request, whatever the time left.
+			if ( ! $first && $deadline && microtime( true ) >= $deadline ) {
 				break;
 			}
+			$first = false;
 			if ( null === $st['cur'] ) {
 				$entry = $reader->next_entry();
 				if ( null === $entry ) {
@@ -1635,6 +1647,89 @@ class WPMIG_Installer {
 	}
 
 	/**
+	 * Count the rows of every imported table and compare them with the rows
+	 * written to the dump by the source site (before any setting is changed).
+	 *
+	 * @param float $deadline Microtime or 0.
+	 * @return bool Finished.
+	 * @throws WPMIG_Exception On connection error.
+	 */
+	private function step_db_check( $deadline ) {
+		$st = &$this->state['check'];
+		if ( ! isset( $st['index'] ) ) {
+			$st = array(
+				'index'  => 0,
+				'tables' => array(),
+			);
+		}
+		$m    = $this->manifest();
+		$info = array();
+		foreach ( $m['tables'] as $t ) {
+			$info[ $t['name'] ] = $t;
+		}
+		$map      = $this->table_map();
+		$names    = array_keys( $map );
+		$db       = $this->connect( $this->state['params'] );
+		$existing = $this->list_tables( $db );
+		$first = $st['index'];
+		while ( $st['index'] < count( $names ) ) {
+			if ( $st['index'] > $first && $deadline && microtime( true ) >= $deadline ) {
+				break;
+			}
+			$name = $names[ $st['index'] ];
+			$t    = $info[ $name ];
+			// Row: source name, rows exported (null: package made by an older version), rows imported (null: missing), structure only.
+			$row = array( $name, isset( $t['exported'] ) ? (int) $t['exported'] : null, null, empty( $t['structure_only'] ) ? 0 : 1 );
+			if ( isset( $existing[ $map[ $name ] ] ) ) {
+				$res = $db->query( 'SELECT COUNT(*) FROM ' . WPMIG_SQL::quote_id( $map[ $name ] ) );
+				$r   = $res ? $res->fetch_row() : null;
+				if ( $r ) {
+					$row[2] = (int) $r[0];
+				}
+			}
+			$st['tables'][] = $row;
+			$st['index']++;
+		}
+		$db->close();
+		$this->state['progress'] = 90 + (int) ( 2 * $st['index'] / max( 1, count( $names ) ) );
+		if ( $st['index'] < count( $names ) ) {
+			$this->state['message'] = 'Contrôle des tables importées… ' . $st['index'] . ' / ' . count( $names );
+			return false;
+		}
+		$exported = 0;
+		$imported = 0;
+		$bad      = 0;
+		$names    = array();
+		foreach ( $st['tables'] as $row ) {
+			if ( null === $row[2] ) {
+				$bad++;
+				$names[] = $row[0];
+				$this->warn( 'Table absente après l\'import : ' . $row[0] . '.' );
+				continue;
+			}
+			$imported += $row[2];
+			if ( null === $row[1] ) {
+				continue;
+			}
+			$exported += $row[1];
+			if ( $row[1] !== $row[2] ) {
+				$bad++;
+				$names[] = $row[0];
+				$this->warn( sprintf( 'Table %s : %d ligne(s) importée(s) pour %d exportée(s).', $row[0], $row[2], $row[1] ) );
+			}
+		}
+		$st['exported'] = $exported;
+		$st['imported'] = $imported;
+		$st['bad']      = $bad;
+		$st['bad_list'] = array_slice( $names, 0, 10 );
+		$this->log(
+			sprintf( 'Contrôle de la base : %d tables, %d lignes exportées, %d lignes importées', count( $st['tables'] ), $exported, $imported )
+			. ( $bad ? ', ' . $bad . ' table(s) en écart.' : ', identiques.' )
+		);
+		return true;
+	}
+
+	/**
 	 * Fix settings in the imported (temporary) tables.
 	 *
 	 * @throws WPMIG_Exception On error.
@@ -1681,7 +1776,7 @@ class WPMIG_Installer {
 		}
 
 		// Rewrite rules are regenerated by WordPress, cached data is dropped.
-		$q( 'DELETE FROM ' . $options . " WHERE option_name IN ('rewrite_rules', 'wpmig_installed') OR option_name LIKE '\\_transient\\_%' OR option_name LIKE '\\_site\\_transient\\_%'" );
+		$q( 'DELETE FROM ' . $options . " WHERE option_name IN ('rewrite_rules', 'wpmig_installed', 'wpmig_report') OR option_name LIKE '\\_transient\\_%' OR option_name LIKE '\\_site\\_transient\\_%'" );
 
 		// Administrator account.
 		if ( '' !== $p['admin_user'] && isset( $tables[ $tmp . 'users' ] ) ) {
@@ -1930,6 +2025,193 @@ class WPMIG_Installer {
 			'time'  => $this->state['finished'] - $this->state['started'],
 		);
 		$this->log( 'Installation terminée en ' . $this->state['result']['time'] . ' s.' );
+
+		// The report is kept in the database: it survives the removal of the installation files.
+		$report                           = $this->build_report();
+		$this->state['result']['checks'] = $report['checks'];
+		$this->state['result']['report'] = $p['url_site'] . '/wp-admin/admin.php?page=wp-migration&view=report';
+		$this->save_report( $report );
+	}
+
+	/**
+	 * Checks and full report of the installation.
+	 *
+	 * @return array
+	 */
+	private function build_report() {
+		$m       = $this->manifest();
+		$p       = $this->state['params'];
+		$ex      = array_merge( array( 'files' => 0, 'failed' => 0, 'bytes' => 0 ), $this->state['extract'] );
+		$db      = array_merge( array( 'errors' => 0, 'queries' => 0, 'broken' => 0 ), $this->state['db'] );
+		$check   = array_merge( array( 'tables' => array(), 'exported' => 0, 'imported' => 0, 'bad' => 0 ), isset( $this->state['check'] ) ? $this->state['check'] : array() );
+		$archive = $this->archive_path();
+		$trailer = $archive ? WPMIG_Archive::read_trailer( $archive ) : null;
+		// The archive also holds the SQL dump, which is not a file of the site.
+		$expected = $trailer && isset( $trailer['files'] ) ? max( 0, (int) $trailer['files'] - 1 ) : null;
+
+		$issues = array();
+		if ( ! empty( $p['skip_verify'] ) ) {
+			$issues[] = 'Archive non vérifiée avant l\'extraction (vérification désactivée).';
+		}
+		if ( $ex['failed'] ) {
+			$issues[] = sprintf( '%d fichier(s) ou dossier(s) n\'ont pas pu être écrits.', $ex['failed'] );
+		} elseif ( empty( $p['skip_files'] ) && null !== $expected && (int) $ex['files'] !== $expected ) {
+			$issues[] = sprintf( '%d fichier(s) extrait(s) sur %d dans l\'archive.', $ex['files'], $expected );
+		}
+		if ( $db['errors'] ) {
+			$issues[] = sprintf( '%d requête(s) SQL en erreur.', $db['errors'] );
+		}
+		if ( $check['bad'] ) {
+			$issues[] = sprintf( '%d table(s) absente(s) ou avec un nombre de lignes différent de la source', $check['bad'] )
+				. ( ! empty( $check['bad_list'] ) ? ' : ' . implode( ', ', $check['bad_list'] ) . ( $check['bad'] > count( $check['bad_list'] ) ? '…' : '' ) : '' ) . '.';
+		}
+
+		$replacements = array();
+		foreach ( $this->replacement_pairs() as $old => $new ) {
+			if ( false === strpos( $old, '\\' ) && false === strpos( $old, '%' ) ) {
+				$replacements[] = array( $old, $new );
+			}
+		}
+		$site = $m['site'];
+		return array(
+			'format'       => 1,
+			'installer'    => WPMIG_INSTALLER,
+			'generator'    => isset( $m['generator'] ) ? $m['generator'] : '',
+			'package'      => array(
+				'id'           => $m['package'],
+				'name'         => $m['name'],
+				'created'      => $m['created'],
+				'archive_size' => $archive ? (float) sprintf( '%u', filesize( $archive ) ) : null,
+			),
+			'mode'         => $this->cli ? 'cli' : 'web',
+			'started'      => $this->state['started'],
+			'finished'     => $this->state['finished'],
+			'source'       => array(
+				'home'    => $site['home'],
+				'siteurl' => $site['siteurl'],
+				'path'    => $site['abspath'],
+				'wp'      => $site['wp_version'],
+				'php'     => $site['php_version'],
+				'db'      => $site['db_version'],
+				'server'  => $site['server'],
+				'prefix'  => $site['table_prefix'],
+			),
+			'destination'  => array(
+				'home'    => $p['url_home'],
+				'siteurl' => $p['url_site'],
+				'path'    => $this->root,
+				'wp'      => $site['wp_version'],
+				'php'     => PHP_VERSION,
+				'db'      => '',
+				'server'  => isset( $_SERVER['SERVER_SOFTWARE'] ) ? $_SERVER['SERVER_SOFTWARE'] : ( $this->cli ? 'CLI' : '' ),
+				'prefix'  => $p['db_prefix'],
+				'db_name' => $p['db_name'],
+				'db_host' => $p['db_host'],
+			),
+			'options'      => array(
+				'db_action'    => $p['db_action'],
+				'skip_files'   => ! empty( $p['skip_files'] ),
+				'skip_verify'  => ! empty( $p['skip_verify'] ),
+				'keep_guid'    => ! empty( $p['keep_guid'] ),
+				'new_salts'    => ! empty( $p['new_salts'] ),
+				'www_variants' => ! empty( $p['www_variants'] ),
+			),
+			'transfer'     => isset( $this->state['transfer'] ) ? $this->state['transfer'] : null,
+			'checks'       => array(
+				'ok'             => ! $issues,
+				'issues'         => $issues,
+				'verified'       => empty( $p['skip_verify'] ),
+				'files_expected' => $expected,
+				'files'          => (int) $ex['files'],
+				'files_failed'   => (int) $ex['failed'],
+				'bytes'          => (float) $ex['bytes'],
+				'tables'         => count( $check['tables'] ),
+				'tables_bad'     => (int) $check['bad'],
+				'rows_exported'  => (int) $check['exported'],
+				'rows_imported'  => (int) $check['imported'],
+				'sql_queries'    => (int) $db['queries'],
+				'sql_errors'     => (int) $db['errors'],
+				'broken'         => (int) $db['broken'],
+			),
+			'tables'       => $check['tables'],
+			'replacements' => $replacements,
+			'excluded'     => isset( $m['excluded'] ) ? $m['excluded'] : array(),
+			'warnings'     => array_values( $this->state['warnings'] ),
+			'notices'      => array_values( array_unique( $this->state['notices'] ) ),
+			'log'          => '',
+		);
+	}
+
+	/**
+	 * Checks summary as text lines (CLI).
+	 *
+	 * @param array $c Checks.
+	 * @return array
+	 */
+	private static function checks_lines( array $c ) {
+		$lines   = array( '' );
+		$lines[] = $c['ok'] ? 'CONTRÔLES : OK, la copie est complète.' : 'CONTRÔLES : ' . count( $c['issues'] ) . ' point(s) à vérifier.';
+		$lines[] = '  Archive   : ' . ( $c['verified'] ? 'sommes de contrôle vérifiées' : 'non vérifiée' );
+		$lines[] = '  Fichiers  : ' . $c['files'] . ( null !== $c['files_expected'] ? ' / ' . $c['files_expected'] : '' ) . ' extraits, ' . $c['files_failed'] . ' en échec';
+		$lines[] = '  Tables    : ' . ( $c['tables'] - $c['tables_bad'] ) . ' / ' . $c['tables'] . ' identiques à la source';
+		$lines[] = '  Lignes    : ' . $c['rows_imported'] . ' importées / ' . $c['rows_exported'] . ' exportées';
+		$lines[] = '  SQL       : ' . $c['sql_queries'] . ' requêtes, ' . $c['sql_errors'] . ' erreur(s)';
+		foreach ( $c['issues'] as $issue ) {
+			$lines[] = '  ! ' . $issue;
+		}
+		return $lines;
+	}
+
+	/**
+	 * Store the report in the options of the new site (read by the WP Migration plugin).
+	 *
+	 * @param array $report Report.
+	 */
+	private function save_report( array $report ) {
+		try {
+			$db = $this->connect( $this->state['params'] );
+		} catch ( Exception $e ) {
+			$this->warn( 'Rapport de migration non enregistré : ' . $e->getMessage() );
+			return;
+		}
+		$db->set_charset( 'utf8mb4' ) || $db->set_charset( 'utf8' );
+		$res = $db->query( 'SELECT VERSION(), @@max_allowed_packet' );
+		$row = $res ? $res->fetch_row() : null;
+		$max = $row ? (int) $row[1] : 1048576;
+		if ( $row ) {
+			$report['destination']['db'] = $row[0];
+		}
+		$table = WPMIG_SQL::quote_id( $this->state['params']['db_prefix'] . 'options' );
+		$db->query( 'DELETE FROM ' . $table . " WHERE option_name = 'wpmig_report'" );
+
+		$log   = (string) @file_get_contents( $this->data_dir . '/install.log' );
+		$limit = 524288;
+		$flags = JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PARTIAL_OUTPUT_ON_ERROR;
+		$saved = false;
+		while ( ! $saved ) {
+			if ( strlen( $log ) > $limit ) {
+				// Keep the beginning and the end: the summary lines are at the end.
+				$head = (int) ( $limit * 0.3 );
+				$tail = $limit - $head;
+				$log  = substr( $log, 0, $head ) . "\n[… " . ( strlen( $log ) - $limit ) . " octets du journal omis …]\n" . substr( $log, -$tail );
+			}
+			$report['log'] = self::utf8( $log );
+			$json          = json_encode( $report, $flags );
+			$sql           = 'INSERT INTO ' . $table . " (option_name, option_value, autoload) VALUES ('wpmig_report', '" . $db->real_escape_string( (string) $json ) . "', 'no')";
+			if ( strlen( $sql ) < $max - 1024 && $db->query( $sql ) ) {
+				$saved = true;
+			} elseif ( $limit < 4096 ) {
+				break;
+			} else {
+				$limit = (int) ( $limit / 2 );
+			}
+		}
+		$db->close();
+		if ( $saved ) {
+			$this->log( 'Rapport de migration enregistré dans le site (WP Migration → Rapport).' );
+		} else {
+			$this->warn( 'Rapport de migration non enregistré dans la base : consultez ' . basename( $this->data_dir ) . '/install.log avant de supprimer les fichiers d\'installation.' );
+		}
 	}
 
 	/* ------------------------------------------------------------------ */
@@ -2178,6 +2460,10 @@ class WPMIG_Installer {
 			throw new WPMIG_Exception( 'Impossible de placer l\'archive dans ' . $this->root . '.' );
 		}
 		$this->log( 'Transfert direct terminé en ' . ( time() - $d['started'] ) . ' s.' );
+		$this->state['transfer'] = array(
+			'size'    => $d['size'],
+			'seconds' => time() - $d['started'],
+		);
 		unset( $this->state['download'] );
 		$this->save_state();
 		return true;
@@ -2692,6 +2978,12 @@ class WPMIG_Installer {
 					$out( '  ! ' . $w );
 				}
 				$out( 'Terminé : ' . $this->state['result']['home'] );
+				if ( ! empty( $this->state['result']['checks'] ) ) {
+					foreach ( self::checks_lines( $this->state['result']['checks'] ) as $line ) {
+						$out( $line );
+					}
+					$out( 'Rapport complet : ' . $this->state['result']['report'] );
+				}
 			}
 			if ( isset( $opts['cleanup'] ) ) {
 				$res = $this->cleanup();
@@ -2777,6 +3069,9 @@ code{background:var(--code);padding:1px 5px;border-radius:4px;font-size:13px}
 ul.list{margin:6px 0;padding-left:20px}
 .hidden{display:none}
 .big{font-size:18px;font-weight:600}
+table.checks{border-collapse:collapse;margin:10px 0;font-size:14px}
+table.checks th{text-align:left;font-weight:600;padding:3px 16px 3px 0;color:var(--muted)}
+table.checks td{padding:3px 0}
 </style>
 </head>
 <body>
@@ -3074,10 +3369,22 @@ ul.list{margin:6px 0;padding-left:20px}
 		(s.notices || []).forEach(function (n) { list += '<li>' + esc(n) + '</li>'; });
 		var warns = '';
 		(s.warnings || []).forEach(function (w) { warns += msg('warning', w); });
+		var checks = '';
+		if (res.checks) {
+			var c = res.checks, n = function (v) { return Number(v).toLocaleString('fr-FR'); };
+			checks = '<table class="checks">' +
+				'<tr><th>Archive</th><td>' + (c.verified ? '✔ sommes de contrôle vérifiées' : '⚠ non vérifiée') + '</td></tr>' +
+				'<tr><th>Fichiers</th><td>' + (c.files_failed ? '⚠ ' : '✔ ') + n(c.files) + (c.files_expected !== null ? ' / ' + n(c.files_expected) : '') + ' extraits' + (c.files_failed ? ', ' + n(c.files_failed) + ' en échec' : '') + '</td></tr>' +
+				'<tr><th>Tables</th><td>' + (c.tables_bad ? '⚠ ' : '✔ ') + n(c.tables - c.tables_bad) + ' / ' + n(c.tables) + ' identiques à la source</td></tr>' +
+				'<tr><th>Lignes</th><td>' + (c.tables_bad ? '⚠ ' : '✔ ') + n(c.rows_imported) + ' importées / ' + n(c.rows_exported) + ' exportées</td></tr>' +
+				'<tr><th>Requêtes SQL</th><td>' + (c.sql_errors ? '⚠ ' : '✔ ') + n(c.sql_queries) + ', ' + n(c.sql_errors) + ' erreur(s)</td></tr></table>';
+			checks = (c.ok ? msg('ok', 'Contrôles réussis : la copie est complète.') : msg('warning', c.issues.join(' '))) + checks +
+				'<p class="hint">Ce rapport, avec le journal complet, reste consultable après la suppression des fichiers d\'installation : <strong>WP Migration → Rapport de migration</strong> dans l\'administration du site.</p>';
+		}
 		app.innerHTML = '<div class="card"><h2>✅ Installation terminée</h2>' +
 			'<p class="big">Le site est disponible à l\'adresse <a href="' + esc(res.home) + '" target="_blank" rel="noopener">' + esc(res.home) + '</a></p>' +
 			'<p>Connectez-vous avec les identifiants du site d\'origine (ou le compte administrateur défini à l\'étape précédente).</p>' +
-			warns + (list ? '<details><summary>Détails</summary><ul class="list">' + list + '</ul></details>' : '') +
+			checks + warns + (list ? '<details><summary>Détails</summary><ul class="list">' + list + '</ul></details>' : '') +
 			'</div><div class="card"><h2>Sécurité : supprimez les fichiers d\'installation</h2>' +
 			'<p>L\'installeur, l\'archive et le dossier de travail contiennent une copie complète du site et de la base de données. Supprimez-les dès que vous avez vérifié le site.</p>' +
 			'<div id="cleanmsg"></div><div class="actions"><a class="button" href="' + esc(res.home) + '" target="_blank" rel="noopener">Voir le site</a>' +

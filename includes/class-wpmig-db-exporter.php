@@ -211,7 +211,8 @@ class WPMIG_DB_Exporter {
 			fflush( $fh );
 			$state['offset'] = ftell( $fh );
 			if ( $finished ) {
-				$state['rows'] += $state['table']['done'];
+				$state['rows']           += $state['table']['done'];
+				$state['counts'][ $name ] = (int) $state['table']['done'];
 				$state['table'] = null;
 				$state['index']++;
 			}
@@ -324,8 +325,8 @@ class WPMIG_DB_Exporter {
 		global $wpdb;
 		$opts = $this->package->data['options'];
 		if ( $name === $wpdb->options ) {
-			// Our own post-install flag must never travel with a package.
-			$where = "option_name <> 'wpmig_installed'";
+			// Our own post-install flag and migration report must never travel with a package.
+			$where = "option_name NOT IN ('wpmig_installed', 'wpmig_report')";
 			if ( ! empty( $opts['skip_transients'] ) ) {
 				$where .= " AND option_name NOT LIKE '\\_transient\\_%' AND option_name NOT LIKE '\\_site\\_transient\\_%'";
 			}

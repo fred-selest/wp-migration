@@ -248,6 +248,52 @@ class WPMIG_CLI {
 	}
 
 	/**
+	 * Show the report of the migration that created this site.
+	 *
+	 * Written by the installer at the end of the installation: archive checksums,
+	 * files extracted, rows exported by the source and imported for each table,
+	 * SQL errors, replacements and the full installation log.
+	 *
+	 * ## OPTIONS
+	 *
+	 * [--format=<format>]
+	 * : text or json.
+	 * ---
+	 * default: text
+	 * ---
+	 *
+	 * [--delete]
+	 * : Delete the report.
+	 *
+	 * ## EXAMPLES
+	 *
+	 *     wp migration report
+	 *     wp migration report > rapport-migration.txt
+	 *
+	 * @param array $args       Arguments.
+	 * @param array $assoc_args Options.
+	 */
+	public function report( $args, $assoc_args ) {
+		$report = WPMIG_Report::get();
+		if ( ! $report ) {
+			WP_CLI::error( 'Aucun rapport de migration : ce site n\'a pas été installé avec l\'installeur WP Migration 1.3.0 ou plus récent, ou le rapport a été supprimé.' );
+		}
+		if ( isset( $assoc_args['delete'] ) ) {
+			WPMIG_Report::delete();
+			WP_CLI::success( 'Rapport de migration supprimé.' );
+			return;
+		}
+		if ( isset( $assoc_args['format'] ) && 'json' === $assoc_args['format'] ) {
+			WP_CLI::line( (string) wp_json_encode( $report, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES ) );
+			return;
+		}
+		WP_CLI::line( rtrim( WPMIG_Report::to_text( $report ) ) );
+		if ( empty( $report['checks']['ok'] ) ) {
+			WP_CLI::halt( 1 );
+		}
+	}
+
+	/**
 	 * List the packages.
 	 *
 	 * [--format=<format>]

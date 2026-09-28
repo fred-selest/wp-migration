@@ -374,8 +374,10 @@ if ( ! class_exists( 'WPMIG_DB_Importer' ) ) {
 			$size = filesize( $file );
 			fseek( $fh, $offset );
 			$done = false;
+			$ran  = false;
 			while ( true ) {
-				if ( $deadline && microtime( true ) >= $deadline ) {
+				// At least one statement per call: a slow connection must not stall the import.
+				if ( $ran && $deadline && microtime( true ) >= $deadline ) {
 					break;
 				}
 				$line = fgets( $fh );
@@ -394,6 +396,7 @@ if ( ! class_exists( 'WPMIG_DB_Importer' ) ) {
 				}
 				$this->execute_statement( $sql );
 				$offset = ftell( $fh );
+				$ran    = true;
 			}
 			fclose( $fh );
 			return array(

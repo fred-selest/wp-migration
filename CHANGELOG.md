@@ -3,9 +3,12 @@
 Toutes les évolutions notables de WP Migration sont consignées ici.
 Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le projet respecte le [versionnage sémantique](https://semver.org/lang/fr/).
 
-## [Non publié]
+## [1.3.0] - 2026-09-28
 
 ### Ajouté
+- **Rapport de migration** conservé dans l'administration du nouveau site (WP Migration → Rapport de migration), même après la suppression des fichiers d'installation : résultat global, contrôles (intégrité de l'archive, fichiers extraits, tables, lignes, requêtes SQL), comparaison source / destination (adresses, dossiers, versions de WordPress, PHP et MySQL, préfixe), détail par table, remplacements effectués, éléments exclus, avertissements et journal complet de l'installation. Téléchargeable en texte et disponible avec `wp migration report` (`--format=json`, code de sortie 1 en cas d'anomalie).
+- Contrôle de la base après l'import : le nombre de lignes de chaque table est comparé à celui exporté par le site d'origine, et tout écart ou table manquante est signalé.
+- Résumé des contrôles à la fin de l'installation, dans le navigateur comme en ligne de commande.
 - Nettoyage automatique des anciens packages, après chaque construction et une fois par jour (WP-Cron) : conservation des 5 derniers et suppression au-delà de 30 jours (réglable), suppression des constructions abandonnées ou en échec après 24 h (leur export SQL compris) et des fichiers orphelins ; les packages ayant un lien de transfert actif ne sont jamais supprimés.
 - Encart « Nettoyage automatique » : réglages, espace utilisé, nettoyage immédiat ; commande `wp migration cleanup` (`--dry-run`, `--keep=`, `--days=`).
 - Les tables de journaux et de cache (Wordfence, WP Mail Logging, WP Umbrella, Redirection, WP Activity Log, sessions WooCommerce…) sont signalées dans l'analyse et dans la liste d'exclusion.
@@ -16,6 +19,7 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le pr
 ### Corrigé
 - L'analyse proposait d'exclure toute table de plus de 100 Mo, y compris `postmeta` (produits, commandes) : seules les tables de journaux ou de cache reconnues sont désormais signalées, jamais les registres RGPD.
 - Le journal de débogage `debug.log` (souvent plusieurs centaines de Mo) était copié dans l'archive : il est désormais exclu, comme les fichiers `error_log`, et apparaît dans les éléments exclus du rapport.
+- Sur un serveur très lent, une étape de l'installeur pouvait ne jamais avancer si le temps alloué était écoulé avant le premier élément traité : chaque requête traite désormais au moins un élément.
 
 ## [1.2.0] - 2026-09-28
 
@@ -53,6 +57,7 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le pr
 - Protection de l'installeur par mot de passe.
 - Compatibilité WordPress 4.9 à 7.1 et PHP 5.6 à 8.4.
 
+[1.3.0]: https://github.com/fred-selest/wp-migration/releases/tag/v1.3.0
 [1.2.0]: https://github.com/fred-selest/wp-migration/releases/tag/v1.2.0
 [1.1.0]: https://github.com/fred-selest/wp-migration/releases/tag/v1.1.0
 [1.0.0]: https://github.com/fred-selest/wp-migration/releases/tag/v1.0.0
