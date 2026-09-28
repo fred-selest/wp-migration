@@ -63,8 +63,8 @@ Copier le dossier dans `wp-content/plugins/wp-migration` (ou installer le zip cr
 
 **WP Migration → Créer un package**, puis un assistant en 3 étapes :
 
-1. **Configuration** : nom, site complet ou base de données seule, exclusions (dossiers, extensions, tables, médias), filtres (transients, spam, révisions), mot de passe de l'installeur (**généré automatiquement**, à noter).
-2. **Analyse** : vérifications du serveur, nombre et taille des fichiers, fichiers volumineux, fichiers illisibles, tables et tailles.
+1. **Configuration** : nom, site complet ou base de données seule, exclusions (dossiers ou fichiers, extensions, médias), données des tables de journaux et de cache à laisser de côté (la table est recréée **vide**, jamais supprimée), filtres (transients, spam, révisions), mot de passe de l'installeur (**généré automatiquement**, à noter).
+2. **Analyse** : vérifications du serveur, nombre et taille des fichiers, fichiers volumineux, fichiers illisibles, tables et tailles ; les tables de journaux ou de cache volumineuses sont signalées (jamais `postmeta`, les commandes ou les registres RGPD).
 3. **Construction** : export SQL puis archive, avec barre de progression. Téléchargez ensuite l'**archive** et **installer.php**.
 
 En SSH : `wp migration build --dir=/chemin/export` (un mot de passe est généré et affiché ; `--password=…` pour le choisir, voir `wp help migration build`).
@@ -130,7 +130,7 @@ L'encart affiche l'espace utilisé, le prochain et le dernier nettoyage, et prop
 
 **Fichiers et serveur**
 - `.htaccess`, `.user.ini` et `php.ini` de l'ancien hébergeur mis de côté (`*.wpmig-source`) : ils sont une cause classique d'« Erreur 500 » (gestionnaire PHP, `auto_prepend_file` de Wordfence…). Un `.htaccess` WordPress propre est écrit (avec le bon `RewriteBase`), puis les permaliens sont régénérés à la première connexion ;
-- exclusion des caches, journaux, sauvegardes d'autres extensions, extensions « must-use » propres aux hébergeurs (WP Engine, Kinsta, GoDaddy, Bluehost…) et des drop-ins `object-cache.php` / `advanced-cache.php` ;
+- exclusion des caches, journaux (dont `debug.log`), sauvegardes d'autres extensions, extensions « must-use » propres aux hébergeurs (WP Engine, Kinsta, GoDaddy, Bluehost…) et des drop-ins `object-cache.php` / `advanced-cache.php` ;
 - `wp-config.php` réécrit en conservant vos constantes et vos clés de sécurité (option pour les régénérer) ; `COOKIE_DOMAIN` retiré, `FORCE_SSL_ADMIN` désactivé si le nouveau site est en http, sauvegarde de l'éventuel `wp-config.php` existant ;
 - `wp-content` déplacé hors de WordPress (`WP_CONTENT_DIR`) replacé à l'emplacement standard.
 

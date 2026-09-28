@@ -16,6 +16,7 @@
 .wpmig details{margin:8px 0}.wpmig summary{cursor:pointer;font-weight:600}
 .wpmig .wpmig-table-list{max-height:260px;overflow:auto;border:1px solid #dcdcde;padding:8px;margin-top:6px;background:#fbfbfb}
 .wpmig .wpmig-table-list label{display:block;margin:2px 0}
+.wpmig .wpmig-log-table{display:inline-block;padding:0 6px;border-radius:8px;background:#dba617;color:#fff;font-size:11px}
 .wpmig .wpmig-downloads .button-hero{margin:4px 8px 4px 0}
 .wpmig .wpmig-row-actions .button{margin:2px 0}
 .wpmig .wpmig-help ol{padding-left:20px}.wpmig .wpmig-help li{margin-bottom:8px}
