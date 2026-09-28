@@ -104,6 +104,12 @@ check( 'pas de double remplacement', 'http://a.com/sub/page //a.com/sub/x', $r2-
 $r3 = new WPMIG_Replacer( WPMIG_Replacer::build_url_pairs( 'https://www.site.fr/', 'http://localhost:8080' ) );
 check( 'https -> http localhost', 'http://localhost:8080/?p=1', $r3->replace( 'https://www.site.fr/?p=1' ) );
 
+check( 'variante www ajoutée', 'https://www.site.fr/blog', WPMIG_Replacer::www_variant( 'https://site.fr/blog' ) );
+check( 'variante www retirée', 'http://site.fr:8080', WPMIG_Replacer::www_variant( 'http://www.site.fr:8080' ) );
+check( 'pas de variante pour localhost / IP', array( null, null ), array( WPMIG_Replacer::www_variant( 'http://localhost:8081' ), WPMIG_Replacer::www_variant( 'http://192.168.1.10' ) ) );
+$r4 = new WPMIG_Replacer( WPMIG_Replacer::build_url_pairs( 'https://www.site.fr', 'https://neuf.fr' ) + WPMIG_Replacer::build_url_pairs( WPMIG_Replacer::www_variant( 'https://www.site.fr' ), 'https://neuf.fr' ) );
+check( 'remplacement des deux variantes', 'https://neuf.fr/a https://neuf.fr/b', $r4->replace( 'https://www.site.fr/a http://site.fr/b' ) );
+
 echo "\nSQL\n";
 $samples = array( '', 'simple', "l'apostrophe", 'back\\slash', "nul\0byte", "ligne\nnouvelle\r\n", "ctrl\x1a", '"guillemets"', "émoji 😀", "\\'", "''" );
 foreach ( $samples as $i => $s ) {

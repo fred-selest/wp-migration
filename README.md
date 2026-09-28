@@ -8,6 +8,30 @@ Extension WordPress pour **copier un site complet (fichiers + base de données) 
 
 WordPress n'a **pas** besoin d'être installé sur la destination.
 
+![Installeur : base de données et nouvelle adresse](docs/screenshots/7-installeur-base-de-donnees.png)
+
+## Captures d'écran
+
+### Sur le site d'origine : création du package
+
+| 1. Configuration | 2. Analyse |
+|---|---|
+| ![Configuration du package](docs/screenshots/1-creation-configuration.png) | ![Analyse du site](docs/screenshots/2-creation-analyse.png) |
+| **3. Package prêt** (archive, installeur et mot de passe) | **Liste des packages** |
+| ![Package prêt](docs/screenshots/3-creation-package-pret.png) | ![Liste des packages](docs/screenshots/4-liste-des-packages.png) |
+
+### Sur le nouveau serveur : installeur
+
+| Mot de passe | Vérifications du serveur |
+|---|---|
+| ![Mot de passe de l'installeur](docs/screenshots/5-installeur-mot-de-passe.png) | ![Vérifications](docs/screenshots/6-installeur-verifications.png) |
+| **Installation en cours** | **Installation terminée** |
+| ![Progression](docs/screenshots/8-installeur-progression.png) | ![Terminé](docs/screenshots/9-installeur-termine.png) |
+
+Après la migration, l'administration du nouveau site confirme l'opération et rappelle de supprimer les fichiers d'installation restants :
+
+![Notification après migration](docs/screenshots/10-notification-apres-migration.png)
+
 ## Compatibilité
 
 | | Pris en charge | Réellement testé |
@@ -29,11 +53,11 @@ Copier le dossier dans `wp-content/plugins/wp-migration` (ou installer le zip cr
 
 **WP Migration → Créer un package**, puis un assistant en 3 étapes :
 
-1. **Configuration** : nom, site complet ou base de données seule, exclusions (dossiers, extensions, tables, médias), filtres (transients, spam, révisions), mot de passe de l'installeur (recommandé).
+1. **Configuration** : nom, site complet ou base de données seule, exclusions (dossiers, extensions, tables, médias), filtres (transients, spam, révisions), mot de passe de l'installeur (**généré automatiquement**, à noter).
 2. **Analyse** : vérifications du serveur, nombre et taille des fichiers, fichiers volumineux, fichiers illisibles, tables et tailles.
 3. **Construction** : export SQL puis archive, avec barre de progression. Téléchargez ensuite l'**archive** et **installer.php**.
 
-En SSH : `wp migration build --password=secret --dir=/chemin/export` (voir `wp help migration build`).
+En SSH : `wp migration build --dir=/chemin/export` (un mot de passe est généré et affiché ; `--password=…` pour le choisir, voir `wp help migration build`).
 
 ### 2. Installer (serveur de destination)
 
@@ -42,7 +66,7 @@ En SSH : `wp migration build --password=secret --dir=/chemin/export` (voir `wp h
 3. Ouvrir `https://nouveau-domaine.fr/installer.php` :
    - **Vérifications** : version de PHP compatible avec la version de WordPress, extensions, droits d'écriture, espace disque, intégrité de l'archive ;
    - **Base de données & URL** : identifiants (pré-remplis si un `wp-config.php` existe déjà), préfixe des tables (modifiable), nouvelle URL (détectée automatiquement), options avancées, création facultative d'un compte administrateur ;
-   - **Installation** : progression, reprise automatique en cas de coupure ;
+   - **Installation** : vérification complète de l'archive (CRC de chaque bloc) **avant toute modification**, puis extraction et import, avec progression et reprise automatique en cas de coupure ;
    - **Terminé** : bouton pour supprimer l'installeur, l'archive et les fichiers temporaires, puis connexion.
 
 En SSH :
@@ -55,7 +79,7 @@ php installer.php --help
 ## Ce qui est géré automatiquement
 
 **Remplacement des URL et des chemins**
-- toutes les variantes de l'ancienne adresse : `http://`, `https://`, `//` (relatif au protocole), JSON échappé (`http:\/\/…`, constructeurs de pages comme Elementor), URL encodée (`http%3A%2F%2F…`) ;
+- toutes les variantes de l'ancienne adresse : `http://`, `https://`, `//` (relatif au protocole), avec ou sans `www.`, JSON échappé (`http:\/\/…`, constructeurs de pages comme Elementor), URL encodée (`http%3A%2F%2F…`) ;
 - données **sérialisées** PHP : analysées sans `unserialize()` (aucun risque d'injection d'objet, aucune dépendance aux classes des extensions), longueurs recalculées, y compris pour les données doublement sérialisées ;
 - remplacement en une seule passe (pas de remplacement en chaîne) et **sur des limites de mots** : `http://ancien.fr` ne touche pas `http://ancien.fr.example.org` ;
 - chemins absolus du serveur (`/home/ancien/public_html` → nouveau chemin), aussi dans `wp-config.php` (`WP_TEMP_DIR`, `WPCACHEHOME`…) ;
@@ -77,12 +101,12 @@ php installer.php --help
 **Robustesse (hébergements mutualisés)**
 - tout le traitement (analyse, export, archive, extraction, import) est découpé en requêtes courtes et **reprenable** : aucun souci de `max_execution_time`, les gros fichiers sont coupés entre plusieurs requêtes ;
 - verrou contre l'exécution simultanée de deux étapes (timeout d'un proxy suivi d'une nouvelle tentative) ;
-- archive avec une somme de contrôle CRC32 par bloc de 1 Mo et une signature de fin : un transfert FTP incomplet ou en mode ASCII est détecté avant toute modification.
+- archive avec une somme de contrôle CRC32 par bloc de 1 Mo et une signature de fin, **entièrement vérifiée avant l'installation** : un transfert FTP incomplet ou en mode ASCII est détecté sans que rien n'ait été modifié sur le serveur.
 
 ## Sécurité
 
 - Dossier de stockage `wp-content/wpmig-backups` protégé (`.htaccess`, `web.config`, `index.php`) et noms de fichiers contenant un identifiant aléatoire (pour nginx) ; téléchargements servis par PHP après vérification des droits et d'un nonce.
-- Installeur protégeable par mot de passe (seul un hachage salé est stocké), session liée à un jeton ; une installation lancée ne peut pas être reprise depuis un autre navigateur sans le mot de passe.
+- Installeur protégé par un mot de passe généré automatiquement (seul un hachage salé est stocké), session liée à un jeton ; une installation lancée ne peut pas être reprise depuis un autre navigateur sans le mot de passe. Sans mot de passe, n'importe qui trouvant `installer.php` pourrait lancer l'installation avec sa propre base de données : c'est possible mais déconseillé, et signalé par l'installeur.
 - L'installeur propose de se supprimer avec l'archive à la fin ; l'administration du nouveau site affiche un avertissement tant que des fichiers d'installation subsistent.
 
 ## Dépannage
@@ -93,7 +117,8 @@ php installer.php --help
 | « Accès refusé » MySQL | Vérifier utilisateur / mot de passe et que l'utilisateur est associé à la base dans le panneau de l'hébergeur. |
 | Pages 404 sur nginx | Ajouter `try_files $uri $uri/ /index.php?$args;` dans la configuration du site. |
 | « Installation déjà lancée depuis un autre navigateur » | Supprimer le dossier `wpmig-installer-data-…` sur le serveur puis recharger l'installeur. |
-| Liens `www.` / sans `www.` restants | Ajouter un remplacement supplémentaire `https://www.ancien.fr => https://nouveau.fr`. |
+| Autres adresses restantes (ancien sous-domaine, CDN…) | Ajouter un remplacement supplémentaire `https://cdn.ancien.fr => https://cdn.nouveau.fr`. |
+| « Archive corrompue » pendant la vérification | Rien n'a été modifié : renvoyer l'archive en mode binaire et relancer. |
 | Journal détaillé | `wpmig-installer-data-…/install.log` (avant le nettoyage). |
 
 ## Développement
