@@ -26,5 +26,6 @@
 .wpmig .wpmig-pre{background:#1d2327;color:#f0f0f1;padding:10px 12px;border-radius:4px;white-space:pre-wrap;word-break:break-all}
 .wpmig .wpmig-transfer-row td{max-width:0}
 .wpmig .wpmig-transfer-active{color:#00a32a;font-size:12px}
+.wpmig .wpmig-cleanup-form label{display:inline-block;margin:4px 24px 4px 0}
 .wpmig code.wpmig-password{font-size:15px;padding:3px 8px;user-select:all}
 @media (max-width:782px){.wpmig .wpmig-actions{justify-content:flex-start}}

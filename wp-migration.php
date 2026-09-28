@@ -33,6 +33,7 @@ require_once WPMIG_DIR . 'includes/class-wpmig-db-exporter.php';
 require_once WPMIG_DIR . 'includes/class-wpmig-archiver.php';
 require_once WPMIG_DIR . 'includes/class-wpmig-installer-builder.php';
 require_once WPMIG_DIR . 'includes/class-wpmig-transfer.php';
+require_once WPMIG_DIR . 'includes/class-wpmig-cleanup.php';
 
 if ( is_admin() ) {
 	require_once WPMIG_DIR . 'includes/class-wpmig-admin.php';
@@ -43,5 +44,6 @@ if ( defined( 'WP_CLI' ) && WP_CLI ) {
 }
 
 register_activation_hook( __FILE__, array( 'WPMIG_Plugin', 'activate' ) );
+register_deactivation_hook( __FILE__, array( 'WPMIG_Cleanup', 'unschedule' ) );
 
 WPMIG_Plugin::init();

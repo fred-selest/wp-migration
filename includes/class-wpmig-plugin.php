@@ -19,6 +19,7 @@ class WPMIG_Plugin {
 	 */
 	public static function init() {
 		WPMIG_Transfer::init();
+		WPMIG_Cleanup::init();
 		if ( is_admin() && class_exists( 'WPMIG_Admin' ) ) {
 			WPMIG_Admin::init();
 		}
@@ -284,5 +285,17 @@ if ( ! function_exists( 'wpmig_date' ) ) {
 			return wp_date( $format, $timestamp );
 		}
 		return date_i18n( $format, $timestamp + (int) ( get_option( 'gmt_offset' ) * HOUR_IN_SECONDS ) );
+	}
+}
+
+if ( ! function_exists( 'wpmig_size' ) ) {
+	/**
+	 * Human readable size (size_format() returns false for 0.0).
+	 *
+	 * @param float $bytes Bytes.
+	 * @return string
+	 */
+	function wpmig_size( $bytes ) {
+		return $bytes > 0 ? size_format( $bytes, 1 ) : '0 o';
 	}
 }

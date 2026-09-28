@@ -456,6 +456,9 @@ class WPMIG_Package {
 		WPMIG_Plugin::rrmdir( rtrim( $this->work_dir(), '/' ) );
 		$this->data['scan']['queue'] = array();
 		$this->log( sprintf( 'Package terminé : archive de %s.', size_format( $this->data['sizes']['archive'], 1 ) ) );
+		// Saved first, so that the new package counts among those to keep.
+		$this->save();
+		WPMIG_Cleanup::after_build( $this );
 	}
 
 	/**
