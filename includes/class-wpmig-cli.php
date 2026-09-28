@@ -47,7 +47,10 @@ class WPMIG_CLI {
 	 * : Store files without compression.
 	 *
 	 * [--password=<password>]
-	 * : Protect the installer with a password.
+	 * : Installer password (a random one is generated and displayed when omitted).
+	 *
+	 * [--no-password]
+	 * : Do not protect the installer (not recommended).
 	 *
 	 * [--dir=<dir>]
 	 * : Copy the archive and installer.php to this directory.
@@ -79,6 +82,10 @@ class WPMIG_CLI {
 			'compress'           => ! ( isset( $assoc_args['compress'] ) && false === $assoc_args['compress'] ) && ! isset( $assoc_args['no-compress'] ),
 			'password'           => $get( 'password' ),
 		);
+		$no_password = isset( $assoc_args['password'] ) && false === $assoc_args['password'];
+		if ( '' === $options['password'] && ! $no_password ) {
+			$options['password'] = self::generate_password();
+		}
 		try {
 			$package = WPMIG_Package::create( $options );
 		} catch ( Exception $e ) {
@@ -123,6 +130,28 @@ class WPMIG_CLI {
 		WP_CLI::success( 'Package prêt (' . size_format( filesize( $archive ), 1 ) . ')' );
 		WP_CLI::log( 'Archive     : ' . $archive );
 		WP_CLI::log( 'Installeur  : ' . $installer );
+		if ( '' !== $options['password'] ) {
+			WP_CLI::log( 'Mot de passe de l\'installeur : ' . $options['password'] );
+		} else {
+			WP_CLI::warning( 'Installeur sans mot de passe : ne le laissez pas en ligne sans surveillance.' );
+		}
+	}
+
+	/**
+	 * Random installer password (no ambiguous characters).
+	 *
+	 * @return string
+	 */
+	private static function generate_password() {
+		$chars = 'abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+		$out   = '';
+		for ( $i = 0; $i < 16; $i++ ) {
+			$out .= $chars[ function_exists( 'random_int' ) ? random_int( 0, strlen( $chars ) - 1 ) : wp_rand( 0, strlen( $chars ) - 1 ) ];
+			if ( 3 === $i || 7 === $i || 11 === $i ) {
+				$out .= '-';
+			}
+		}
+		return $out;
 	}
 
 	/**

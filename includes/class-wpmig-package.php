@@ -551,6 +551,7 @@ class WPMIG_Package {
 			'warnings' => array_slice( $d['warnings'], 0, 100 ),
 			'report'   => 'scanned' === $d['status'] || 'complete' === $d['status'] ? $this->report_for_display() : null,
 			'sizes'    => $d['sizes'],
+			'secured'  => ! empty( $d['options']['password_hash'] ),
 			'log'      => array_slice( $d['log'], -30 ),
 		);
 	}

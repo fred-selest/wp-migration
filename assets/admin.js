@@ -9,6 +9,7 @@
 	var form = document.getElementById( 'wpmig-form' );
 	var current = null;
 	var retries = 0;
+	var password = '';
 
 	function $( sel, ctx ) {
 		return ( ctx || document ).querySelector( sel );
@@ -91,6 +92,21 @@
 			}
 		}
 		return opts;
+	}
+
+	/* Installer password: 16 random characters without ambiguous ones (0/O, 1/l/I). */
+	function generatePassword() {
+		var chars = 'abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+		var bytes = new Uint32Array( 16 );
+		var out = '';
+		window.crypto.getRandomValues( bytes );
+		for ( var i = 0; i < bytes.length; i++ ) {
+			out += chars.charAt( bytes[ i ] % chars.length );
+			if ( i === 3 || i === 7 || i === 11 ) {
+				out += '-';
+			}
+		}
+		return out;
 	}
 
 	function toggleFilesOptions() {
@@ -208,6 +224,13 @@
 		html += '<a class="button button-primary button-hero" href="' + esc( downloadUrl( state.id, 'archive' ) ) + '">Archive (' + esc( state.sizes.archive_h || '' ) + ')</a> ';
 		html += '<a class="button button-primary button-hero" href="' + esc( downloadUrl( state.id, 'installer' ) ) + '">installer.php</a>';
 		html += '</p>';
+		if ( password && state.secured ) {
+			html += '<p>Mot de passe de l\'installeur : <code class="wpmig-password">' + esc( password ) + '</code> — notez-le, il ne sera plus affiché.</p>';
+		} else if ( state.secured ) {
+			html += '<p>Installeur protégé par le mot de passe défini à la création du package.</p>';
+		} else {
+			html += '<div class="notice notice-warning inline"><p>Installeur <strong>sans mot de passe</strong> : ne le laissez pas en ligne sans surveillance.</p></div>';
+		}
 		if ( state.warnings.length ) {
 			html += '<details><summary>Avertissements (' + state.warnings.length + ')</summary><ul class="wpmig-warnings">';
 			state.warnings.forEach( function ( w ) {
@@ -223,6 +246,7 @@
 	/* Events. */
 	document.getElementById( 'wpmig-new' ).addEventListener( 'click', function () {
 		form.reset();
+		form.elements.password.value = generatePassword();
 		toggleFilesOptions();
 		showStep( 1 );
 		wizard.scrollIntoView( { behavior: 'smooth' } );
@@ -242,7 +266,13 @@
 		$( '.wpmig-actions', panel ).hidden = true;
 		$( '.wpmig-report', panel ).innerHTML = '';
 		progress( panel, { progress: 0, message: 'Démarrage de l\'analyse…' } );
-		post( 'wpmig_create', { options: JSON.stringify( collectOptions() ) } ).then( loop ).catch( function ( err ) {
+		var options = collectOptions();
+		password = options.password || '';
+		if ( ! password && ! window.confirm( 'Créer un installeur sans mot de passe ? C\'est déconseillé : toute personne trouvant installer.php en ligne pourrait l\'utiliser.' ) ) {
+			showStep( 1 );
+			return;
+		}
+		post( 'wpmig_create', { options: JSON.stringify( options ) } ).then( loop ).catch( function ( err ) {
 			error( err.message );
 		} );
 	} );
@@ -252,7 +282,9 @@
 		if ( ! action ) {
 			return;
 		}
-		if ( action === 'cancel' ) {
+		if ( action === 'genpass' ) {
+			form.elements.password.value = generatePassword();
+		} else if ( action === 'cancel' ) {
 			wizard.hidden = true;
 		} else if ( action === 'discard' ) {
 			if ( current ) {

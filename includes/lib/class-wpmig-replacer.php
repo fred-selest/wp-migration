@@ -394,6 +394,27 @@ if ( ! class_exists( 'WPMIG_Replacer' ) ) {
 		}
 
 		/**
+		 * Same URL with "www." added or removed (null for IP addresses, localhost...).
+		 *
+		 * @param string $url URL.
+		 * @return string|null
+		 */
+		public static function www_variant( $url ) {
+			if ( ! preg_match( '#^([a-z][a-z0-9+.\-]*://)([^/:?\#]+)(.*)$#i', trim( $url ), $m ) ) {
+				return null;
+			}
+			$host = strtolower( $m[2] );
+			if ( false === strpos( $host, '.' ) || preg_match( '/^[0-9.]+$/', $host ) || '[' === $host[0] ) {
+				return null;
+			}
+			if ( 0 === strpos( $host, 'www.' ) ) {
+				$other = substr( $host, 4 );
+				return false === strpos( $other, '.' ) ? null : $m[1] . $other . $m[3];
+			}
+			return $m[1] . 'www.' . $host . $m[3];
+		}
+
+		/**
 		 * Build the replacement pairs for a filesystem path change.
 		 *
 		 * @param string $old Old absolute path.

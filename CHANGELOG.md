@@ -3,6 +3,17 @@
 Toutes les évolutions notables de WP Migration sont consignées ici.
 Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le projet respecte le [versionnage sémantique](https://semver.org/lang/fr/).
 
+## [Non publié]
+
+### Ajouté
+- Vérification complète de l'archive (CRC32 de chaque bloc) avant toute modification sur le serveur de destination ; en cas de corruption, rien n'est touché.
+- Remplacement automatique de l'ancienne adresse avec / sans `www.` (option désactivable, `--no-www-variant` en ligne de commande).
+- Captures d'écran dans le README.
+
+### Modifié
+- Sécurité : le mot de passe de l'installeur est généré automatiquement (administration et WP-CLI) et affiché à la fin de la construction ; l'installeur signale lorsqu'il n'est pas protégé.
+- Affichage des tailles et des nombres au format français dans l'installeur.
+
 ## [1.0.0] - 2026-09-28
 
 ### Ajouté

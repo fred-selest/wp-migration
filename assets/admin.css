@@ -20,4 +20,5 @@
 .wpmig .wpmig-row-actions .button{margin:2px 0}
 .wpmig .wpmig-help ol{padding-left:20px}.wpmig .wpmig-help li{margin-bottom:8px}
 .wpmig .wpmig-error{margin-top:12px}
+.wpmig code.wpmig-password{font-size:15px;padding:3px 8px;user-select:all}
 @media (max-width:782px){.wpmig .wpmig-actions{justify-content:flex-start}}

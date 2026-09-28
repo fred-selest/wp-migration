@@ -586,7 +586,7 @@ class WPMIG_Installer {
 			$bytes /= 1024;
 			$i++;
 		}
-		return round( $bytes, $i ? 1 : 0 ) . ' ' . $units[ $i ];
+		return number_format( $bytes, $i ? 1 : 0, ',', ' ' ) . ' ' . $units[ $i ];
 	}
 
 	/**
@@ -845,7 +845,7 @@ class WPMIG_Installer {
 			if ( ! $trailer ) {
 				$add( 'Archive', 'Archive incomplète : le transfert a probablement été interrompu. Renvoyez le fichier (en mode binaire si vous utilisez FTP).', 'error' );
 			} else {
-				$add( 'Archive', basename( $archive ) . ' — ' . self::size( filesize( $archive ) ) . ', ' . $trailer['files'] . ' fichiers', 'ok' );
+				$add( 'Archive', basename( $archive ) . ' — ' . self::size( filesize( $archive ) ) . ', ' . number_format( (float) $trailer['files'], 0, ',', ' ' ) . ' fichiers', 'ok' );
 			}
 			if ( PHP_INT_SIZE < 8 && filesize( $archive ) > 2000000000 ) {
 				$add( 'PHP 32 bits', 'Ce serveur ne peut pas lire une archive de plus de 2 Go.', 'error' );
@@ -883,6 +883,9 @@ class WPMIG_Installer {
 		$add( 'Extensions recommandées', $missing ? 'manquantes : ' . implode( ', ', $missing ) : 'toutes présentes', $missing ? 'warning' : 'ok' );
 
 		$writable = is_writable( $this->root );
+		if ( empty( $this->config['password_hash'] ) ) {
+			$add( 'Protection', 'Installeur sans mot de passe : toute personne connaissant son adresse peut lancer l\'installation. Ne le laissez pas en ligne sans surveillance.', 'warning' );
+		}
 		$add( 'Dossier d\'installation', $this->root . ( $writable ? ' (accessible en écriture)' : ' — NON accessible en écriture' ), $writable ? 'ok' : 'error' );
 
 		if ( $manifest ) {
@@ -896,7 +899,7 @@ class WPMIG_Installer {
 			$add( 'WordPress existant', 'Un WordPress est déjà présent dans ce dossier : ses fichiers seront écrasés (wp-config.php et .htaccess sont sauvegardés).', 'warning' );
 		}
 		$mem = ini_get( 'memory_limit' );
-		$add( 'memory_limit', $mem, ( '-1' !== $mem && $this->to_bytes( $mem ) < 67108864 ) ? 'warning' : 'ok' );
+		$add( 'memory_limit', '-1' === $mem ? 'illimité' : $mem, ( '-1' !== $mem && $this->to_bytes( $mem ) < 67108864 ) ? 'warning' : 'ok' );
 		$max = (int) ini_get( 'max_execution_time' );
 		$add( 'max_execution_time', $max ? $max . ' s (traitement découpé en étapes courtes)' : 'illimité', 'ok' );
 		$server = isset( $_SERVER['SERVER_SOFTWARE'] ) ? $_SERVER['SERVER_SOFTWARE'] : '';
@@ -1164,6 +1167,8 @@ class WPMIG_Installer {
 		$p['skip_files']  = $bool( 'skip_files' ) || ! empty( $manifest['db_only'] );
 		$p['new_salts']   = $bool( 'new_salts' );
 		$p['keep_guid']   = $bool( 'keep_guid' );
+		$p['www_variants'] = $bool( 'www_variants' );
+		$p['skip_verify']  = $bool( 'skip_verify' );
 		$p['admin_user']  = $get( 'admin_user' );
 		$p['admin_pass']  = isset( $in['admin_pass'] ) ? (string) $in['admin_pass'] : '';
 		$p['admin_email'] = $get( 'admin_email' );
@@ -1201,6 +1206,15 @@ class WPMIG_Installer {
 
 		$pairs += WPMIG_Replacer::build_url_pairs( $site['siteurl'], $p['url_site'] );
 		$pairs += WPMIG_Replacer::build_url_pairs( $site['home'], $p['url_home'] );
+		if ( ! empty( $p['www_variants'] ) ) {
+			// Links written with / without "www." on the old site: the most common leftover after a move.
+			foreach ( array( 'siteurl' => 'url_site', 'home' => 'url_home' ) as $old => $new ) {
+				$variant = WPMIG_Replacer::www_variant( $site[ $old ] );
+				if ( null !== $variant ) {
+					$pairs += WPMIG_Replacer::build_url_pairs( $variant, $p[ $new ] );
+				}
+			}
+		}
 		if ( ! empty( $site['content_relocated'] ) || 0 !== strpos( $site['content_url'] . '/', $site['siteurl'] . '/' ) ) {
 			$pairs += WPMIG_Replacer::build_url_pairs( $site['content_url'], $p['url_site'] . '/wp-content' );
 		}
@@ -1240,10 +1254,10 @@ class WPMIG_Installer {
 		}
 		$this->state['params']   = $params;
 		$this->state['status']   = 'running';
-		$this->state['step']     = 'extract';
+		$this->state['step']     = empty( $params['skip_verify'] ) ? 'verify' : 'extract';
 		$this->state['started']  = time();
 		$this->state['progress'] = 0;
-		$this->state['message']  = 'Extraction de l\'archive…';
+		$this->state['message']  = empty( $params['skip_verify'] ) ? 'Vérification de l\'archive…' : 'Extraction de l\'archive…';
 		$this->state['tmp_prefix'] = 'wpmt' . self::random_string( 4, true ) . '_';
 		$this->log( 'Installation démarrée : ' . $this->manifest['site']['home'] . ' → ' . $params['url_home'] );
 		$this->save_state();
@@ -1260,6 +1274,12 @@ class WPMIG_Installer {
 		$this->raise_limits();
 		while ( 'running' === $this->state['status'] ) {
 			switch ( $this->state['step'] ) {
+				case 'verify':
+					if ( $this->step_verify( $deadline ) ) {
+						$this->state['step']    = 'extract';
+						$this->state['message'] = 'Extraction de l\'archive…';
+					}
+					break;
 				case 'extract':
 					if ( $this->step_extract( $deadline ) ) {
 						$this->state['step']    = 'database';
@@ -1302,6 +1322,71 @@ class WPMIG_Installer {
 			}
 		}
 		return $this->public_state();
+	}
+
+	/**
+	 * Full archive check (CRC32 of every block) before anything is modified.
+	 *
+	 * @param float $deadline Microtime or 0.
+	 * @return bool Finished.
+	 * @throws WPMIG_Exception On corrupted archive.
+	 */
+	private function step_verify( $deadline ) {
+		$st = &$this->state['verify'];
+		if ( empty( $st ) ) {
+			$st = array(
+				'offset'  => 0,
+				'files'   => 0,
+				'in_file' => false,
+			);
+		}
+		$archive = $this->archive_path();
+		if ( ! $archive ) {
+			throw new WPMIG_Exception( 'Archive introuvable.' );
+		}
+		$size   = max( 1, filesize( $archive ) );
+		$reader = new WPMIG_Archive_Reader( $archive, $st['offset'] );
+		try {
+			while ( true ) {
+				if ( $deadline && microtime( true ) >= $deadline ) {
+					break;
+				}
+				if ( ! $st['in_file'] ) {
+					$entry = $reader->next_entry();
+					if ( null === $entry ) {
+						$reader->close();
+						$this->log( 'Archive vérifiée : ' . $st['files'] . ' entrées, sommes de contrôle correctes.' );
+						return true;
+					}
+					$st['files']++;
+					$st['in_file'] = 'f' === $entry['type'];
+					$st['offset']  = $reader->tell();
+				}
+				// Every block is checked against its CRC32 by the reader.
+				while ( $st['in_file'] ) {
+					if ( false === $reader->next_block() ) {
+						$st['in_file'] = false;
+					}
+					$st['offset'] = $reader->tell();
+					if ( $deadline && microtime( true ) >= $deadline ) {
+						break;
+					}
+				}
+			}
+		} catch ( WPMIG_Exception $e ) {
+			$reader->close();
+			// Nothing has been modified yet: start from scratch once the archive is sent again.
+			$st = array();
+			$this->log( 'ERREUR : ' . $e->getMessage() );
+			$this->state['status'] = 'new';
+			$this->state['step']   = '';
+			$this->save_state();
+			throw new WPMIG_Exception( $e->getMessage() . ' Aucun fichier ni aucune table n\'a été modifié : renvoyez l\'archive (en mode binaire) puis relancez l\'installation.' );
+		}
+		$reader->close();
+		$this->state['progress'] = (int) ( 10 * $st['offset'] / $size );
+		$this->state['message']  = 'Vérification de l\'archive… ' . self::size( $st['offset'] ) . ' / ' . self::size( $size );
+		return false;
 	}
 
 	/**
@@ -1457,7 +1542,7 @@ class WPMIG_Installer {
 			} else {
 				unset( $cur );
 			}
-			$this->state['progress'] = (int) ( 45 * $st['offset'] / $size );
+			$this->state['progress'] = 10 + (int) ( 35 * $st['offset'] / $size );
 			$this->state['message']  = 'Extraction de l\'archive… ' . $st['files'] . ' fichiers (' . self::size( $st['bytes'] ) . ')';
 			if ( microtime( true ) - $last_save > 2 ) {
 				$this->save_state();
@@ -2168,7 +2253,7 @@ class WPMIG_Installer {
 	private function cli_main() {
 		$opts = getopt(
 			'h',
-			array( 'help', 'db-host:', 'db-name:', 'db-user:', 'db-pass:', 'db-prefix:', 'db-action:', 'db-create', 'url:', 'home-url:', 'skip-files', 'new-salts', 'keep-guid', 'admin-user:', 'admin-pass:', 'admin-email:', 'replace:', 'cleanup', 'check' )
+			array( 'help', 'db-host:', 'db-name:', 'db-user:', 'db-pass:', 'db-prefix:', 'db-action:', 'db-create', 'url:', 'home-url:', 'skip-files', 'new-salts', 'keep-guid', 'no-www-variant', 'skip-verify', 'admin-user:', 'admin-pass:', 'admin-email:', 'replace:', 'cleanup', 'check' )
 		);
 		$out = function ( $msg ) {
 			fwrite( STDOUT, $msg . "\n" );
@@ -2186,6 +2271,8 @@ class WPMIG_Installer {
 			$out( '  --skip-files             Importe uniquement la base de données' );
 			$out( '  --new-salts              Régénère les clés de sécurité de wp-config.php' );
 			$out( '  --keep-guid              Ne modifie pas la colonne guid des articles' );
+			$out( '  --no-www-variant         Ne remplace pas la variante avec / sans « www. » de l\'ancienne adresse' );
+			$out( '  --skip-verify            Ne vérifie pas toute l\'archive avant de l\'installer' );
 			$out( '  --admin-user=, --admin-pass=, --admin-email=   Crée/réinitialise un administrateur' );
 			$out( '  --replace="ancien=>nouveau"   Remplacement supplémentaire (répétable)' );
 			$out( '  --check                  Affiche uniquement les vérifications' );
@@ -2227,7 +2314,8 @@ class WPMIG_Installer {
 							$in[ $key ] = is_array( $opts[ $opt ] ) ? end( $opts[ $opt ] ) : $opts[ $opt ];
 						}
 					}
-					foreach ( array( 'db-create' => 'db_create', 'skip-files' => 'skip_files', 'new-salts' => 'new_salts', 'keep-guid' => 'keep_guid' ) as $opt => $key ) {
+					$in['www_variants'] = isset( $opts['no-www-variant'] ) ? '' : '1';
+					foreach ( array( 'db-create' => 'db_create', 'skip-files' => 'skip_files', 'new-salts' => 'new_salts', 'keep-guid' => 'keep_guid', 'skip-verify' => 'skip_verify' ) as $opt => $key ) {
 						if ( isset( $opts[ $opt ] ) ) {
 							$in[ $key ] = '1';
 						}
@@ -2440,7 +2528,7 @@ ul.list{margin:6px 0;padding-left:20px}
 			'<tr><th>Site d\'origine</th><td><strong>' + esc(p.blogname) + '</strong> — ' + esc(p.home) + '</td></tr>' +
 			'<tr><th>Créé le</th><td>' + esc(p.created) + ' UTC</td></tr>' +
 			'<tr><th>WordPress</th><td>' + esc(p.wp_version) + ' (PHP ' + esc(p.php) + ', ' + esc(p.db) + ')</td></tr>' +
-			'<tr><th>Contenu</th><td>' + (p.db_only ? 'Base de données uniquement' : esc(p.files) + ' fichiers (' + esc(p.size) + ')') + ', ' + esc(p.tables) + ' tables</td></tr>' +
+			'<tr><th>Contenu</th><td>' + (p.db_only ? 'Base de données uniquement' : esc(Number(p.files).toLocaleString('fr-FR')) + ' fichiers (' + esc(p.size) + ')') + ', ' + esc(p.tables) + ' tables</td></tr>' +
 			'</table></div>' +
 			'<div class="card"><h2>Vérifications du serveur</h2><table>' + rows + '</table>' +
 			(info.blocking ? msg('error', 'Corrigez les erreurs ci-dessus puis rechargez la page.') : '') +
@@ -2476,7 +2564,9 @@ ul.list{margin:6px 0;padding-left:20px}
 			'<details><summary>Options avancées</summary>' +
 			(p.db_only ? '' : '<label class="inline"><input type="checkbox" name="skip_files" value="1"> Ne pas extraire les fichiers (importer uniquement la base de données)</label>') +
 			'<label class="inline"><input type="checkbox" name="new_salts" value="1"> Régénérer les clés de sécurité (déconnecte tous les utilisateurs)</label>' +
+			'<label class="inline"><input type="checkbox" name="www_variants" value="1" checked> Remplacer aussi l\'ancienne adresse avec / sans « www. »</label>' +
 			'<label class="inline"><input type="checkbox" name="keep_guid" value="1"> Ne pas modifier la colonne « guid » des articles</label>' +
+			'<label class="inline"><input type="checkbox" name="skip_verify" value="1"> Ne pas vérifier l\'intégrité complète de l\'archive avant l\'installation (plus rapide, déconseillé)</label>' +
 			'<label for="f_extra">Remplacements supplémentaires (un par ligne : <code>ancien => nouveau</code>)</label><textarea id="f_extra" name="extra_replace" placeholder="contact@ancien-domaine.fr => contact@nouveau-domaine.fr"></textarea>' +
 			'<h3>Compte administrateur (facultatif)</h3><p class="hint">Crée un administrateur, ou change le mot de passe s\'il existe déjà. Sinon, connectez-vous avec vos identifiants habituels du site d\'origine.</p><div class="grid">' +
 			field('admin_user', 'Identifiant', '', 'text', '', 'autocomplete="off"') +
@@ -2543,6 +2633,7 @@ ul.list{margin:6px 0;padding-left:20px}
 			document.getElementById('perr').innerHTML = '';
 			updateProgress(r.state);
 			if (r.state.status === 'complete') { renderDone(r.state); return; }
+			if (r.state.status === 'new') { location.reload(); return; }
 			setTimeout(run, r.state.busy ? 3000 : 150);
 		}).catch(function (e) {
 			retries++;

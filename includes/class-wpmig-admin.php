@@ -347,8 +347,9 @@ class WPMIG_Admin {
 					</tr>
 					<tr>
 						<th scope="row"><label for="wpmig-password">Mot de passe de l'installeur</label></th>
-						<td><input type="password" id="wpmig-password" name="password" class="regular-text" autocomplete="new-password">
-						<p class="description">Facultatif mais recommandé : il sera demandé à l'ouverture de <code>installer.php</code>.</p></td>
+						<td><input type="text" id="wpmig-password" name="password" class="regular-text code" autocomplete="off" spellcheck="false">
+						<button type="button" class="button" data-action="genpass">Générer</button>
+						<p class="description">Généré automatiquement : <strong>notez-le</strong>, il sera demandé à l'ouverture de <code>installer.php</code>. Sans mot de passe, n'importe qui trouvant l'installeur en ligne pourrait lancer l'installation avec sa propre base de données et prendre le contrôle du site.</p></td>
 					</tr>
 					<tr>
 						<th scope="row">Archive</th>
