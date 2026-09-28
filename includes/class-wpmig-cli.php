@@ -155,6 +155,60 @@ class WPMIG_CLI {
 	}
 
 	/**
+	 * Create (or revoke) the direct transfer link of a package.
+	 *
+	 * The installer downloads the archive from this link, straight from this site.
+	 *
+	 * ## OPTIONS
+	 *
+	 * <id>
+	 * : Package id.
+	 *
+	 * [--hours=<hours>]
+	 * : Link lifetime in hours.
+	 * ---
+	 * default: 24
+	 * ---
+	 *
+	 * [--revoke]
+	 * : Revoke the current link.
+	 *
+	 * ## EXAMPLES
+	 *
+	 *     wp migration transfer-link 20260928_120000_0123456789ab
+	 *
+	 * @subcommand transfer-link
+	 * @param array $args       Arguments.
+	 * @param array $assoc_args Options.
+	 */
+	public function transfer_link( $args, $assoc_args ) {
+		$package = WPMIG_Package::load( $args[0] );
+		if ( ! $package ) {
+			WP_CLI::error( 'Package introuvable.' );
+		}
+		if ( isset( $assoc_args['revoke'] ) ) {
+			WPMIG_Transfer::revoke( $package );
+			WP_CLI::success( 'Lien révoqué.' );
+			return;
+		}
+		try {
+			$link = WPMIG_Transfer::create( $package, isset( $assoc_args['hours'] ) ? (int) $assoc_args['hours'] : 0 );
+		} catch ( Exception $e ) {
+			WP_CLI::error( $e->getMessage() );
+			return;
+		}
+		if ( $link['insecure'] ) {
+			WP_CLI::warning( 'Le site n\'est pas en HTTPS : l\'archive transitera en clair.' );
+		}
+		WP_CLI::log( 'Lien de transfert (valable jusqu\'au ' . $link['expires_h'] . ') :' );
+		WP_CLI::log( $link['url'] );
+		WP_CLI::log( '' );
+		WP_CLI::log( 'Sur le nouveau serveur :' );
+		WP_CLI::log( "  curl -o installer.php '" . $link['installer_url'] . "'" );
+		WP_CLI::log( "  php installer.php --source-url='" . $link['url'] . "' --url=https://nouveau-site.fr --db-name=... --db-user=... --db-pass=..." );
+	}
+
+	/**
 	 * List the packages.
 	 *
 	 * [--format=<format>]
@@ -179,7 +233,12 @@ class WPMIG_CLI {
 				'archive' => 'complete' === $d['status'] ? $package->archive_path() : '',
 			);
 		}
-		WP_CLI\Utils\format_items( isset( $assoc_args['format'] ) ? $assoc_args['format'] : 'table', $items, array( 'id', 'name', 'status', 'size', 'archive' ) );
+		$format = isset( $assoc_args['format'] ) ? $assoc_args['format'] : 'table';
+		if ( 'ids' === $format ) {
+			WP_CLI::log( implode( ' ', wp_list_pluck( $items, 'id' ) ) );
+			return;
+		}
+		WP_CLI\Utils\format_items( $format, $items, array( 'id', 'name', 'status', 'size', 'archive' ) );
 	}
 
 	/**

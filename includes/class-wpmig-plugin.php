@@ -18,6 +18,7 @@ class WPMIG_Plugin {
 	 * Hooks.
 	 */
 	public static function init() {
+		WPMIG_Transfer::init();
 		if ( is_admin() && class_exists( 'WPMIG_Admin' ) ) {
 			WPMIG_Admin::init();
 		}
@@ -260,10 +261,28 @@ class WPMIG_Plugin {
 			if ( 'installer.php' === $item
 				|| preg_match( '/_installer\.php$/', $item )
 				|| preg_match( '/\.wpmig$/', $item )
-				|| 0 === strpos( $item, 'wpmig-installer-data' ) ) {
+				|| 0 === strpos( $item, 'wpmig-installer-data' )
+				// wp-config backups of versions 1.0 / 1.1, readable over HTTP.
+				|| 0 === strpos( $item, 'wp-config.php.wpmig-backup-' ) ) {
 				$found[] = $root . '/' . $item;
 			}
 		}
 		return $found;
+	}
+}
+
+if ( ! function_exists( 'wpmig_date' ) ) {
+	/**
+	 * Localized date (wp_date() only exists since WordPress 5.3).
+	 *
+	 * @param int $timestamp Timestamp.
+	 * @return string
+	 */
+	function wpmig_date( $timestamp ) {
+		$format = get_option( 'date_format' ) . ' ' . get_option( 'time_format' );
+		if ( function_exists( 'wp_date' ) ) {
+			return wp_date( $format, $timestamp );
+		}
+		return date_i18n( $format, $timestamp + (int) ( get_option( 'gmt_offset' ) * HOUR_IN_SECONDS ) );
 	}
 }

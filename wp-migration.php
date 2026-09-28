@@ -32,6 +32,7 @@ require_once WPMIG_DIR . 'includes/class-wpmig-scanner.php';
 require_once WPMIG_DIR . 'includes/class-wpmig-db-exporter.php';
 require_once WPMIG_DIR . 'includes/class-wpmig-archiver.php';
 require_once WPMIG_DIR . 'includes/class-wpmig-installer-builder.php';
+require_once WPMIG_DIR . 'includes/class-wpmig-transfer.php';
 
 if ( is_admin() ) {
 	require_once WPMIG_DIR . 'includes/class-wpmig-admin.php';
