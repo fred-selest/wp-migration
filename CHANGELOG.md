@@ -3,6 +3,18 @@
 Toutes les évolutions notables de WP Migration sont consignées ici.
 Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le projet respecte le [versionnage sémantique](https://semver.org/lang/fr/).
 
+## [1.8.0] - 2026-09-30
+
+### Ajouté
+- **Contrôles de cohérence après l'installation** : à la fin de l'installation (navigateur et ligne de commande), puis dans **WP Migration → Rapport de migration → Cohérence du site**, avec un bouton « Relancer les contrôles » pour vérifier une correction. Ils ne modifient rien et ne font jamais échouer l'installation.
+  - **Menus** : chaque emplacement du thème actif (et, avec Polylang, chaque menu par langue) doit pointer vers un menu existant.
+  - **Permaliens** : rappel d'enregistrer les réglages si les règles de réécriture n'ont pas encore été régénérées (pages traduites en 404).
+  - **WPML** : liens de traduction comparés à ceux du site d'origine (lignes sans contenu associé, lignes vers un contenu absent), langue par défaut, domaines de langue restés sur l'ancien site, clé de site liée au domaine.
+  - **Polylang** : langue par défaut vide ou inconnue, domaines de langue restés sur l'ancien site, présence simultanée de données WPML.
+- Le package embarque quelques chiffres du site d'origine (liens de traduction WPML) pour comparer avec la copie : une ligne `element_id` vide déjà présente sur l'origine n'est pas signalée comme une anomalie.
+- `wp migration check` (`--format=json`, `--save`) ; code de sortie 1 en cas de point à vérifier. La section figure aussi dans l'export texte du rapport, et l'accueil signale les points à vérifier.
+- Lecture des réglages sérialisés sans instancier d'objet (même principe que le remplacement des adresses).
+
 ## [1.7.0] - 2026-09-29
 
 ### Modifié
@@ -107,6 +119,7 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le pr
 - Protection de l'installeur par mot de passe.
 - Compatibilité WordPress 4.9 à 7.1 et PHP 5.6 à 8.4.
 
+[1.8.0]: https://github.com/fred-selest/wp-migration/releases/tag/v1.8.0
 [1.7.0]: https://github.com/fred-selest/wp-migration/releases/tag/v1.7.0
 [1.6.1]: https://github.com/fred-selest/wp-migration/releases/tag/v1.6.1
 [1.6.0]: https://github.com/fred-selest/wp-migration/releases/tag/v1.6.0

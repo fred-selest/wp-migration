@@ -41,6 +41,7 @@ class WPMIG_Report {
 				'excluded'     => array(),
 				'warnings'     => array(),
 				'notices'      => array(),
+				'consistency'  => array(),
 				'log'          => '',
 				'started'      => 0,
 				'finished'     => 0,
@@ -48,6 +49,57 @@ class WPMIG_Report {
 			),
 			$data
 		);
+	}
+
+	/**
+	 * Data of the consistency checks read from this site's database.
+	 *
+	 * @param string $old_home Address of the source site ('' when unknown).
+	 * @param array  $source   Figures of the source kept in the package.
+	 * @return array
+	 */
+	public static function consistency_data( $old_home = '', array $source = array() ) {
+		global $wpdb;
+		$query = function ( $sql ) use ( $wpdb ) {
+			$shown = $wpdb->suppress_errors( true );
+			$rows  = $wpdb->get_results( $sql, ARRAY_A ); // phpcs:ignore WordPress.DB.PreparedSQL
+			$wpdb->suppress_errors( $shown );
+			return is_array( $rows ) ? $rows : array();
+		};
+		return WPMIG_Consistency::collect( $wpdb->prefix, $query, 'esc_sql', $old_home, home_url(), $source );
+	}
+
+	/**
+	 * Consistency checks of this site now, compared with the source of the migration when known.
+	 *
+	 * @return array Findings.
+	 */
+	public static function consistency_now() {
+		$report = self::get();
+		$source = $report && ! empty( $report['multilingual_source'] ) && is_array( $report['multilingual_source'] ) ? $report['multilingual_source'] : array();
+		$old    = $report && ! empty( $report['source']['home'] ) ? $report['source']['home'] : '';
+		return WPMIG_Consistency::evaluate( self::consistency_data( $old, $source ) );
+	}
+
+	/**
+	 * Run the consistency checks again and keep the result in the report.
+	 *
+	 * @return array|null Findings, null without a report.
+	 */
+	public static function recheck() {
+		$report = self::get();
+		if ( ! $report ) {
+			return null;
+		}
+		$items = self::consistency_now();
+		$raw   = get_option( self::OPTION );
+		$data  = is_array( $raw ) ? $raw : json_decode( (string) $raw, true );
+		if ( is_array( $data ) ) {
+			$data['consistency']         = $items;
+			$data['consistency_checked'] = time();
+			update_option( self::OPTION, wp_json_encode( $data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PARTIAL_OUTPUT_ON_ERROR ), false );
+		}
+		return $items;
 	}
 
 	/**
@@ -275,6 +327,21 @@ class WPMIG_Report {
 		$title( 'Contrôles' );
 		foreach ( self::checks( $report ) as $row ) {
 			$lines[] = ( $row[2] ? '[OK] ' : '[!!] ' ) . self::pad( $row[0], 26 ) . $row[1];
+		}
+
+		if ( ! empty( $report['consistency'] ) ) {
+			$title( 'Cohérence du site' );
+			$labels = array(
+				'ok'      => '[OK] ',
+				'warning' => '[!!] ',
+				'info'    => '[i]  ',
+			);
+			foreach ( $report['consistency'] as $item ) {
+				$lines[] = $labels[ $item['status'] ] . self::pad( $item['label'], 26 ) . $item['message'];
+				foreach ( $item['details'] as $detail ) {
+					$lines[] = self::pad( '', 31 ) . '- ' . $detail;
+				}
+			}
 		}
 
 		$title( 'Source / destination' );
