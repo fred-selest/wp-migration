@@ -4,7 +4,7 @@ Tags: migration, duplicate, clone, backup, move
 Requires at least: 4.9
 Tested up to: 7.1
 Requires PHP: 5.6
-Stable tag: 1.6.1
+Stable tag: 1.7.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -35,6 +35,11 @@ Multisite non pris en charge.
 3. Envoyer l'archive et installer.php sur le nouveau serveur puis ouvrir installer.php dans le navigateur.
 
 == Changelog ==
+
+= 1.7.0 =
+* Nouvelle interface : page d'accueil à quatre cartes et onglets (Accueil, Sauvegardes, Recevoir un site, Synchronisation, Rechercher / Remplacer, Réglages, Aide).
+* « Package » devient « sauvegarde » dans l'interface ; sauvegarde complète ou de la base de données en un clic.
+* Rechercher / Remplacer en mode simple : type de recherche détecté automatiquement, options avancées repliées.
 
 = 1.6.1 =
 * Bouton « Sauvegarder la base de données » avant un remplacement ou une synchronisation du contenu.

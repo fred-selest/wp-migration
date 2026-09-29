@@ -59,3 +59,40 @@
 .wpmig .wpmig-sync-source select{vertical-align:baseline}
 .wpmig h1 .wpmig-logo{width:36px;height:36px;vertical-align:middle;margin:-4px 10px 0 0}
 @media (max-width:782px){.wpmig .wpmig-actions{justify-content:flex-start}}
+/* Tabs and home */
+.wpmig .wpmig-tabs{margin:12px 0 0;max-width:1100px}
+.wpmig .wpmig-tab{max-width:1100px}
+.wpmig .wpmig-home-title{margin:20px 0 12px;font-size:1.4em}
+.wpmig .wpmig-status{list-style:none;margin:16px 0 0;padding:0;max-width:1100px;display:flex;flex-wrap:wrap;gap:8px}
+.wpmig .wpmig-status li{margin:0;padding:8px 12px;background:#fff;border:1px solid #dcdcde;border-left-width:4px;border-radius:4px}
+.wpmig .wpmig-status .dashicons{vertical-align:text-bottom;margin-right:2px}
+.wpmig .wpmig-status-ok{border-left-color:#00a32a!important}.wpmig .wpmig-status-ok .dashicons{color:#00a32a}
+.wpmig .wpmig-status-warn{border-left-color:#dba617!important}.wpmig .wpmig-status-warn .dashicons{color:#dba617}
+.wpmig .wpmig-status-info{border-left-color:#2271b1!important}.wpmig .wpmig-status-info .dashicons{color:#2271b1}
+.wpmig .wpmig-tiles{display:grid;grid-template-columns:1fr;gap:16px;max-width:1100px}
+@media (min-width:783px){.wpmig .wpmig-tiles{grid-template-columns:repeat(2,1fr)}}
+@media (min-width:1200px){.wpmig .wpmig-tiles{grid-template-columns:repeat(4,1fr)}}
+.wpmig .wpmig-tile{display:flex;flex-direction:column;align-items:flex-start;background:#fff;border:1px solid #c3c4c7;border-radius:6px;padding:20px;color:inherit;text-decoration:none;box-shadow:0 1px 1px rgba(0,0,0,.04);transition:border-color .15s,box-shadow .15s}
+.wpmig .wpmig-tile:hover,.wpmig .wpmig-tile:focus{border-color:#2271b1;box-shadow:0 0 0 1px #2271b1;color:inherit}
+.wpmig .wpmig-tile-icon{width:48px;height:48px;font-size:26px;line-height:48px;text-align:center;border-radius:50%;background:#f0f6fc;color:#2271b1;margin-bottom:12px}
+.wpmig .wpmig-tile h2{margin:0 0 8px;font-size:1.15em}
+.wpmig .wpmig-tile p{flex:1;margin:0 0 16px;color:#50575e}
+.wpmig .wpmig-home-help{margin-top:20px;color:#50575e}
+/* One-click backups */
+.wpmig .wpmig-quick-choices{display:flex;flex-wrap:wrap;gap:12px;margin:12px 0}
+.wpmig .wpmig-choice{display:flex;flex-direction:column;justify-content:flex-start;align-items:flex-start;flex:1;min-width:240px;max-width:420px;text-align:left;padding:14px 16px;background:#f6f7f7;border:1px solid #c3c4c7;border-radius:6px;cursor:pointer;font:inherit;color:inherit}
+.wpmig .wpmig-choice:hover:not(:disabled){border-color:#2271b1;background:#f0f6fc}
+.wpmig .wpmig-choice:disabled{opacity:.6;cursor:default}
+.wpmig .wpmig-choice strong{display:block;font-size:1.05em;color:#2271b1;margin-bottom:4px}
+.wpmig .wpmig-choice span{display:block;color:#50575e}
+.wpmig .wpmig-downloads{margin:12px 0}
+.wpmig .wpmig-password{font-size:14px}
+/* Simple mode */
+.wpmig .wpmig-advanced{margin:0 0 12px}
+.wpmig .wpmig-advanced>summary{padding:4px 0;color:#2271b1}
+.wpmig .wpmig-suggest{background:#f0f6fc;border-left:4px solid #2271b1;padding:8px 12px}
+@media (max-width:782px){
+	.wpmig .wpmig-tabs .nav-tab{float:none;display:block;margin:0 0 -1px}
+	.wpmig .wpmig-tile{padding:16px}
+	.wpmig .wpmig-choice{max-width:none}
+}

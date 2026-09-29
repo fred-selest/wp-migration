@@ -46,7 +46,7 @@ class WPMIG_Transfer {
 	 */
 	public static function create( WPMIG_Package $package, $hours = 0 ) {
 		if ( 'complete' !== $package->data['status'] ) {
-			throw new WPMIG_Exception( 'Le package n\'est pas terminé.' );
+			throw new WPMIG_Exception( 'La sauvegarde n\'est pas terminée.' );
 		}
 		$hours = $hours > 0 ? (int) $hours : self::default_hours();
 		$hours = max( 1, min( 24 * 30, $hours ) );
@@ -146,7 +146,7 @@ class WPMIG_Transfer {
 		$query = (string) wp_parse_url( $link, PHP_URL_QUERY );
 		parse_str( $query, $args );
 		if ( empty( $args['action'] ) || self::ACTION !== $args['action'] || empty( $args['id'] ) || ! preg_match( '/^\d{8}_\d{6}_[a-f0-9]{12}$/', $args['id'] ) || empty( $args['key'] ) || ! preg_match( '/^[a-f0-9]{32}$/', $args['key'] ) ) {
-			throw new WPMIG_Exception( 'Ce n\'est pas un lien de transfert WP Migration : créez-le sur le site d\'origine (WP Migration > Packages > Transfert direct).' );
+			throw new WPMIG_Exception( 'Ce n\'est pas un lien de transfert WP Migration : créez-le sur le site d\'origine (WP Migration > Sauvegardes > Transfert direct).' );
 		}
 		if ( 0 === strpos( strtok( $link, '?' ), admin_url( 'admin-ajax.php' ) ) && WPMIG_Package::load( $args['id'] ) ) {
 			throw new WPMIG_Exception( 'Ce lien pointe vers ce site-ci : collez le lien créé sur le site d\'origine.' );
@@ -212,7 +212,7 @@ class WPMIG_Transfer {
 		$path = 'installer' === $which ? $package->installer_path() : $package->archive_path();
 		$name = 'installer' === $which ? 'installer.php' : $package->data['files']['archive'];
 		if ( ! is_file( $path ) ) {
-			self::fail( 404, 'Fichier du package introuvable.' );
+			self::fail( 404, 'Fichier de la sauvegarde introuvable.' );
 		}
 
 		$size  = (float) sprintf( '%u', filesize( $path ) );

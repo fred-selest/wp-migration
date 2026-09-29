@@ -59,7 +59,7 @@ class WPMIG_Admin {
 	 * @return array
 	 */
 	public static function action_links( $links ) {
-		array_unshift( $links, '<a href="' . esc_url( admin_url( 'admin.php?page=' . self::SLUG ) ) . '">Packages</a>' );
+		array_unshift( $links, '<a href="' . esc_url( self::tab_url( 'backups' ) ) . '">Sauvegardes</a>' );
 		return $links;
 	}
 
@@ -104,7 +104,7 @@ class WPMIG_Admin {
 		$id      = isset( $_POST['id'] ) ? sanitize_text_field( wp_unslash( $_POST['id'] ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification
 		$package = WPMIG_Package::load( $id );
 		if ( ! $package ) {
-			wp_send_json_error( array( 'message' => 'Package introuvable.' ) );
+			wp_send_json_error( array( 'message' => 'Sauvegarde introuvable.' ) );
 		}
 		return $package;
 	}
@@ -488,7 +488,7 @@ class WPMIG_Admin {
 				'days' => isset( $_POST['days'] ) ? absint( $_POST['days'] ) : 30,
 			)
 		);
-		$args = array( 'page' => self::SLUG );
+		$args = array( 'page' => self::SLUG, 'tab' => 'settings' );
 		if ( isset( $_POST['clean_now'] ) ) {
 			$result          = WPMIG_Cleanup::run();
 			$args['cleaned'] = $result['count'];
@@ -581,6 +581,44 @@ class WPMIG_Admin {
 	}
 
 	/**
+	 * Tabs of the page (slug => label).
+	 *
+	 * @return array
+	 */
+	public static function tabs() {
+		return array(
+			'home'     => 'Accueil',
+			'backups'  => 'Sauvegardes',
+			'receive'  => 'Recevoir un site',
+			'sync'     => 'Synchronisation',
+			'search'   => 'Rechercher / Remplacer',
+			'settings' => 'Réglages',
+			'help'     => 'Aide',
+		);
+	}
+
+	/**
+	 * Address of a tab.
+	 *
+	 * @param string $tab  Tab.
+	 * @param array  $args Other query arguments.
+	 * @return string
+	 */
+	public static function tab_url( $tab, array $args = array() ) {
+		return add_query_arg( array_merge( array( 'page' => self::SLUG, 'tab' => $tab ), $args ), admin_url( 'admin.php' ) );
+	}
+
+	/**
+	 * Tab of the request.
+	 *
+	 * @return string
+	 */
+	private static function current_tab() {
+		$tab = isset( $_GET['tab'] ) ? sanitize_key( wp_unslash( $_GET['tab'] ) ) : 'home'; // phpcs:ignore WordPress.Security.NonceVerification -- display only.
+		return isset( self::tabs()[ $tab ] ) ? $tab : 'home';
+	}
+
+	/**
 	 * Main page.
 	 */
 	public static function page() {
@@ -592,14 +630,14 @@ class WPMIG_Admin {
 			self::render_report_page();
 			return;
 		}
+		$tab = self::current_tab();
 		echo '<div class="wrap wpmig">';
 		echo '<h1 class="wp-heading-inline">' . self::logo() . 'WP Migration</h1>';
+		echo '<hr class="wp-header-end">';
 		if ( is_multisite() ) {
 			echo '<div class="notice notice-error"><p>Les installations multisite ne sont pas prises en charge.</p></div></div>';
 			return;
 		}
-		echo ' <button type="button" class="page-title-action" id="wpmig-new">Créer un package</button>';
-		echo '<hr class="wp-header-end">';
 
 		try {
 			WPMIG_Plugin::storage_dir();
@@ -608,20 +646,179 @@ class WPMIG_Admin {
 			return;
 		}
 
-		self::render_report_card();
-		self::render_wizard();
-		self::render_packages();
-		self::render_sync_source();
-		self::render_cleanup();
-		self::render_import();
-		self::render_sync();
-		self::render_search();
-		self::render_help();
-		echo '</div>';
+		echo '<nav class="nav-tab-wrapper wpmig-tabs" aria-label="Sections">';
+		foreach ( self::tabs() as $slug => $label ) {
+			echo '<a class="nav-tab' . ( $slug === $tab ? ' nav-tab-active' : '' ) . '" href="' . esc_url( self::tab_url( $slug ) ) . '"' . ( $slug === $tab ? ' aria-current="page"' : '' ) . '>' . esc_html( $label ) . '</a>';
+		}
+		echo '</nav>';
+
+		echo '<div class="wpmig-tab wpmig-tab-' . esc_attr( $tab ) . '">';
+		switch ( $tab ) {
+			case 'backups':
+				self::render_backup_start();
+				self::render_wizard();
+				self::render_packages();
+				break;
+			case 'receive':
+				self::render_receive();
+				break;
+			case 'sync':
+				self::render_sync_source();
+				self::render_sync();
+				break;
+			case 'search':
+				self::render_search();
+				break;
+			case 'settings':
+				self::render_cleanup();
+				self::render_about();
+				break;
+			case 'help':
+				self::render_help();
+				break;
+			default:
+				self::render_home();
+		}
+		echo '</div></div>';
 	}
 
 	/**
-	 * Package creation wizard.
+	 * Home: what does the visitor want to do?
+	 */
+	private static function render_home() {
+		$done   = array();
+		foreach ( WPMIG_Package::all() as $package ) {
+			if ( 'complete' === $package->data['status'] ) {
+				$done[] = $package;
+			}
+		}
+		$link    = WPMIG_Sync_Source::link();
+		$sync    = WPMIG_Sync::current();
+		$replace = WPMIG_Search::current();
+
+		// Status.
+		echo '<ul class="wpmig-status">';
+		if ( $done ) {
+			$last = $done[0]->data;
+			echo '<li class="wpmig-status-ok"><span class="dashicons dashicons-yes-alt"></span> Dernière sauvegarde : <strong>' . esc_html( wpmig_date( $last['created'] ) ) . '</strong>' . ( ! empty( $last['sizes']['archive'] ) ? ' (' . esc_html( size_format( $last['sizes']['archive'], 1 ) ) . ')' : '' ) . ' — <a href="' . esc_url( self::tab_url( 'backups' ) ) . '">' . esc_html( count( $done ) ) . ' sauvegarde(s)</a></li>';
+		} else {
+			echo '<li class="wpmig-status-warn"><span class="dashicons dashicons-warning"></span> Aucune sauvegarde de ce site pour l\'instant — <a href="' . esc_url( self::tab_url( 'backups' ) ) . '">en créer une</a> avant toute modification importante.</li>';
+		}
+		if ( $link ) {
+			echo '<li class="wpmig-status-info"><span class="dashicons dashicons-admin-links"></span> Lien de synchronisation actif jusqu\'au <strong>' . esc_html( wpmig_date( $link['expires'] ) ) . '</strong> — <a href="' . esc_url( self::tab_url( 'sync' ) ) . '">le gérer</a></li>';
+		}
+		if ( $sync ) {
+			echo '<li class="wpmig-status-info"><span class="dashicons dashicons-update"></span> Une synchronisation du contenu est ouverte — <a href="' . esc_url( self::tab_url( 'sync' ) ) . '">la reprendre</a></li>';
+		}
+		if ( $replace ) {
+			echo '<li class="wpmig-status-info"><span class="dashicons dashicons-search"></span> Un rechercher / remplacer est ouvert — <a href="' . esc_url( self::tab_url( 'search' ) ) . '">le reprendre</a></li>';
+		}
+		echo '</ul>';
+
+		echo '<h2 class="wpmig-home-title">Que voulez-vous faire ?</h2>';
+		$tiles = array(
+			array(
+				'tab'    => 'backups',
+				'icon'   => 'cloud-upload',
+				'title'  => 'Déménager ou sauvegarder ce site',
+				'text'   => 'Créez une sauvegarde complète (fichiers et base de données) pour changer d\'hébergeur ou de nom de domaine, faire une copie de travail ou simplement garder une sauvegarde.',
+				'button' => 'Créer une sauvegarde',
+			),
+			array(
+				'tab'    => 'receive',
+				'icon'   => 'download',
+				'title'  => 'Recevoir un site ici',
+				'text'   => 'Vous avez une sauvegarde ou un autre site à installer sur cet hébergement ? Remplacez ce site par une copie, sans FTP si le site d\'origine vous donne un lien.',
+				'button' => 'Recevoir un site',
+			),
+			array(
+				'tab'    => 'sync',
+				'icon'   => 'update',
+				'title'  => 'Récupérer les commandes et contenus',
+				'text'   => 'Vous travaillez sur une copie pendant que le site en ligne continue de vendre ? Ramenez sur la copie les commandes, clients, produits et articles créés entre-temps.',
+				'button' => 'Synchroniser',
+			),
+			array(
+				'tab'    => 'search',
+				'icon'   => 'search',
+				'title'  => 'Changer une adresse ou un texte',
+				'text'   => 'Remplacez une adresse, un domaine ou un texte partout dans la base de données, sans casser les réglages. Une analyse précède le changement, et il peut être annulé.',
+				'button' => 'Rechercher / remplacer',
+			),
+		);
+		echo '<div class="wpmig-tiles">';
+		foreach ( $tiles as $tile ) {
+			echo '<a class="wpmig-tile" href="' . esc_url( self::tab_url( $tile['tab'] ) ) . '">';
+			echo '<span class="wpmig-tile-icon dashicons dashicons-' . esc_attr( $tile['icon'] ) . '"></span>';
+			echo '<h2>' . esc_html( $tile['title'] ) . '</h2>';
+			echo '<p>' . esc_html( $tile['text'] ) . '</p>';
+			echo '<span class="button button-primary">' . esc_html( $tile['button'] ) . '</span>';
+			echo '</a>';
+		}
+		echo '</div>';
+		self::render_report_card();
+		echo '<p class="wpmig-home-help">Première fois ? <a href="' . esc_url( self::tab_url( 'help' ) ) . '">Consultez le guide pas à pas</a>.</p>';
+	}
+
+	/**
+	 * Quick start of a backup, above the customizable form.
+	 */
+	private static function render_backup_start() {
+		?>
+		<div class="wpmig-card wpmig-quick" id="wpmig-quick">
+			<h2>Créer une sauvegarde</h2>
+			<p>Une sauvegarde se compose d'une <strong>archive</strong> et d'un <strong>installeur</strong> (<code>installer.php</code>) à déposer sur un autre hébergement pour y recréer le site, ou à conserver pour revenir en arrière.</p>
+			<div class="wpmig-quick-choices">
+				<button type="button" class="wpmig-choice" data-quick="full">
+					<strong>Sauvegarde complète</strong>
+					<span>Fichiers et base de données. Recommandée pour déménager ou copier le site.</span>
+				</button>
+				<button type="button" class="wpmig-choice" data-quick="db">
+					<strong>Base de données seulement</strong>
+					<span>Plus rapide. Utile avant une modification des contenus.</span>
+				</button>
+			</div>
+			<p><button type="button" class="button-link" id="wpmig-new">Personnaliser (dossiers exclus, tables, mot de passe…)</button></p>
+			<div id="wpmig-quick-box"></div>
+		</div>
+		<?php
+	}
+
+	/**
+	 * Receive a site here.
+	 */
+	private static function render_receive() {
+		?>
+		<div class="wpmig-card">
+			<h2>Recevoir un site sur cet hébergement</h2>
+			<p>Deux façons de remplacer <strong>ce site</strong> par une copie d'un autre site. Dans les deux cas, tous les contenus, réglages, extensions et comptes de ce site sont remplacés.</p>
+			<h3>Vous avez les deux fichiers d'une sauvegarde</h3>
+			<ol>
+				<li>Créez une <strong>base de données MySQL</strong> vide (nom, utilisateur, mot de passe) depuis le panneau de votre hébergeur.</li>
+				<li>Envoyez l'<strong>archive</strong> (<code>.wpmig</code>) et <code>installer.php</code> dans le dossier du site, par FTP/SFTP en mode <em>binaire</em>. L'ancien contenu du dossier peut y rester : il sera remplacé.</li>
+				<li>Ouvrez <code>https://votre-domaine.fr/installer.php</code> dans le navigateur, saisissez le mot de passe de la sauvegarde et suivez les étapes. Les adresses et chemins sont remplacés automatiquement.</li>
+				<li>Connectez-vous avec vos identifiants habituels, puis <strong>supprimez les fichiers d'installation</strong> (bouton proposé à la fin).</li>
+			</ol>
+		</div>
+		<?php
+		self::render_import();
+	}
+
+	/**
+	 * About and version.
+	 */
+	private static function render_about() {
+		?>
+		<div class="wpmig-card">
+			<h2>À propos</h2>
+			<p>WP Migration <strong><?php echo esc_html( WPMIG_VERSION ); ?></strong>. Les mises à jour sont proposées par WordPress comme pour les autres extensions (bouton « Vérifier les mises à jour » dans la liste des extensions).</p>
+			<p class="description">Dossier de stockage des sauvegardes : <code><?php echo esc_html( WPMIG_Plugin::storage_dir() ); ?></code></p>
+		</div>
+		<?php
+	}
+
+	/**
+	 * Backup creation wizard (customizable).
 	 */
 	private static function render_wizard() {
 		$tables = WPMIG_DB_Exporter::site_tables();
@@ -630,13 +827,13 @@ class WPMIG_Admin {
 			<ol class="wpmig-steps">
 				<li data-step="1">1. Configuration</li>
 				<li data-step="2">2. Analyse</li>
-				<li data-step="3">3. Construction</li>
+				<li data-step="3">3. Création</li>
 			</ol>
 
 			<form id="wpmig-form" data-step="1" class="wpmig-panel">
 				<table class="form-table" role="presentation">
 					<tr>
-						<th scope="row"><label for="wpmig-name">Nom du package</label></th>
+						<th scope="row"><label for="wpmig-name">Nom de la sauvegarde</label></th>
 						<td><input type="text" id="wpmig-name" name="name" class="regular-text" value="<?php echo esc_attr( WPMIG_Package::default_name() ); ?>" maxlength="40">
 						<p class="description">Lettres, chiffres et tirets. Il sert à nommer les fichiers.</p></td>
 					</tr>
@@ -704,7 +901,7 @@ class WPMIG_Admin {
 				<div class="wpmig-report"></div>
 				<p class="wpmig-actions" hidden>
 					<button type="button" class="button" data-action="discard">Retour</button>
-					<button type="button" class="button button-primary" data-action="build">Construire le package</button>
+					<button type="button" class="button button-primary" data-action="build">Créer la sauvegarde</button>
 				</p>
 			</div>
 
@@ -718,13 +915,13 @@ class WPMIG_Admin {
 	}
 
 	/**
-	 * Packages list.
+	 * Backups list.
 	 */
 	private static function render_packages() {
 		$packages = WPMIG_Package::all();
-		echo '<div class="wpmig-card"><h2>Packages</h2>';
+		echo '<div class="wpmig-card"><h2>Vos sauvegardes</h2>';
 		if ( ! $packages ) {
-			echo '<p class="wpmig-empty">Aucun package. Cliquez sur « Créer un package » pour commencer.</p></div>';
+			echo '<p class="wpmig-empty">Aucune sauvegarde. Créez-en une ci-dessus pour commencer.</p></div>';
 			return;
 		}
 		echo '<table class="widefat striped wpmig-packages"><thead><tr><th>Nom</th><th>Créé le</th><th>Taille</th><th>Statut</th><th>Actions</th></tr></thead><tbody>';
@@ -732,9 +929,9 @@ class WPMIG_Admin {
 			$d      = $package->data;
 			$labels = array(
 				'scanning' => 'Analyse interrompue',
-				'scanned'  => 'Analysé (non construit)',
-				'building' => 'Construction interrompue',
-				'complete' => 'Prêt',
+				'scanned'  => 'Analysée (non créée)',
+				'building' => 'Création interrompue',
+				'complete' => 'Prête',
 				'error'    => 'Erreur',
 			);
 			echo '<tr data-id="' . esc_attr( $d['id'] ) . '">';
@@ -828,7 +1025,7 @@ class WPMIG_Admin {
 		$report = WPMIG_Report::get();
 		echo '<div class="wrap wpmig wpmig-report">';
 		echo '<h1 class="wp-heading-inline">' . self::logo() . 'Rapport de migration</h1> ';
-		echo '<a class="page-title-action" href="' . esc_url( admin_url( 'admin.php?page=' . self::SLUG ) ) . '">← WP Migration</a>';
+		echo '<a class="page-title-action" href="' . esc_url( self::tab_url( 'home' ) ) . '">← WP Migration</a>';
 		echo '<hr class="wp-header-end">';
 		if ( ! $report ) {
 			echo '<div class="wpmig-card"><p>Aucun rapport : ce site n\'a pas été installé avec l\'installeur WP Migration 1.3.0 ou plus récent, ou le rapport a été supprimé.</p></div></div>';
@@ -938,7 +1135,7 @@ class WPMIG_Admin {
 		<div class="wpmig-card">
 			<h2>Exclusions et remarques</h2>
 			<?php if ( $report['excluded'] ) : ?>
-				<details><summary>Exclus volontairement du package par le site d'origine (<?php echo esc_html( count( $report['excluded'] ) ); ?>)</summary>
+				<details><summary>Exclus volontairement de la sauvegarde par le site d'origine (<?php echo esc_html( count( $report['excluded'] ) ); ?>)</summary>
 					<ul class="wpmig-report-list">
 						<?php foreach ( $report['excluded'] as $item ) : ?>
 							<li><code><?php echo esc_html( $item ); ?></code></li>
@@ -994,12 +1191,12 @@ class WPMIG_Admin {
 			<?php elseif ( isset( $_GET['cleaned'] ) ) : ?>
 				<div class="notice notice-success inline"><p><?php echo esc_html( absint( $_GET['cleaned'] ) ? sprintf( 'Nettoyage effectué : %d élément(s) supprimé(s), %s libérés.', absint( $_GET['cleaned'] ), isset( $_GET['freed'] ) ? sanitize_text_field( wp_unslash( $_GET['freed'] ) ) : '0' ) : 'Nettoyage effectué : rien à supprimer.' ); ?></p></div>
 			<?php endif; ?>
-			<p>Les anciens packages occupent de l'espace sur l'hébergement et contiennent une copie complète du site. Le nettoyage s'exécute après chaque construction et une fois par jour. Les packages ayant un lien de transfert actif ne sont jamais supprimés ; les constructions abandonnées ou en échec le sont après 24 h.</p>
+			<p>Les anciennes sauvegardes occupent de l'espace sur l'hébergement et contiennent une copie complète du site. Le nettoyage s'exécute après chaque création et une fois par jour. Les sauvegardes ayant un lien de transfert actif ne sont jamais supprimées ; les créations abandonnées ou en échec le sont après 24 h.</p>
 			<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" class="wpmig-cleanup-form">
 				<input type="hidden" name="action" value="wpmig_cleanup_settings">
 				<?php wp_nonce_field( 'wpmig_cleanup_settings' ); ?>
-				<label>Conserver les <input type="number" name="keep" min="0" max="1000" value="<?php echo esc_attr( $settings['keep'] ); ?>" class="small-text"> derniers packages</label>
-				<label>Supprimer les packages de plus de <input type="number" name="days" min="0" max="3650" value="<?php echo esc_attr( $settings['days'] ); ?>" class="small-text"> jours</label>
+				<label>Conserver les <input type="number" name="keep" min="0" max="1000" value="<?php echo esc_attr( $settings['keep'] ); ?>" class="small-text"> dernières sauvegardes</label>
+				<label>Supprimer les sauvegardes de plus de <input type="number" name="days" min="0" max="3650" value="<?php echo esc_attr( $settings['days'] ); ?>" class="small-text"> jours</label>
 				<p class="description">0 désactive la règle correspondante.</p>
 				<p>
 					<button type="submit" class="button">Enregistrer</button>
@@ -1008,7 +1205,7 @@ class WPMIG_Admin {
 			</form>
 			<p class="description">
 				<?php
-				echo esc_html( 'Espace utilisé par les packages : ' . wpmig_size( WPMIG_Cleanup::storage_size() ) . '.' );
+				echo esc_html( 'Espace utilisé par les sauvegardes : ' . wpmig_size( WPMIG_Cleanup::storage_size() ) . '.' );
 				if ( $pending ) {
 					$bytes = 0;
 					foreach ( $pending as $item ) {
@@ -1033,8 +1230,8 @@ class WPMIG_Admin {
 		$link = WPMIG_Sync_Source::link();
 		?>
 		<div class="wpmig-card wpmig-sync-source" id="wpmig-sync-source">
-			<h2>Autoriser la synchronisation depuis ce site</h2>
-			<p>Pour récupérer sur une copie de travail de ce site (préproduction, développement) les commandes, clients, produits, articles et pages créés ou modifiés ici depuis la copie : créez un lien et collez-le dans <strong>WP Migration → Synchroniser le contenu</strong> sur la copie. Ce site est seulement lu, jamais modifié.</p>
+			<h2>1. Sur le site en ligne : autoriser la synchronisation</h2>
+			<p>Pour récupérer sur une copie de travail de ce site (préproduction, développement) les commandes, clients, produits, articles et pages créés ou modifiés ici depuis la copie : créez un lien et collez-le dans <strong>WP Migration → Synchronisation</strong> sur la copie. Ce site est seulement lu, jamais modifié.</p>
 			<div class="wpmig-sync-link-status">
 				<?php if ( $link ) : ?>
 					<p><span class="wpmig-transfer-active">● Lien actif jusqu'au <?php echo esc_html( wpmig_date( $link['expires'] ) ); ?></span>
@@ -1072,7 +1269,7 @@ class WPMIG_Admin {
 		$labels = WPMIG_Sync::labels();
 		?>
 		<div class="wpmig-card wpmig-sync" id="wpmig-sync" data-state="<?php echo esc_attr( $current ? wp_json_encode( $current->public_state() ) : '' ); ?>" data-labels="<?php echo esc_attr( wp_json_encode( array( 'kinds' => $labels, 'actions' => WPMIG_Sync::action_labels(), 'done' => WPMIG_Sync::done_labels() ) ) ); ?>">
-			<h2>Synchroniser le contenu depuis le site d'origine</h2>
+			<h2>2. Sur la copie de travail : récupérer le contenu</h2>
 			<p>Vous travaillez sur ce site pendant que le site d'origine reste en ligne ? Récupérez ici ce qui y a été créé ou modifié depuis la copie : <strong>commandes, clients, produits (et leur stock), codes promo, articles, pages, médias, avis</strong>. Les numéros de commande sont conservés ; vos modifications faites ici sur les produits, pages et médias sont gardées. Une analyse montre tout avant l'import, et une synchronisation peut être annulée.</p>
 			<form id="wpmig-sync-form" <?php echo $current ? 'hidden' : ''; ?>>
 				<p><label for="wpmig-sync-link"><strong>Lien de synchronisation</strong> (créé sur le site d'origine, avec WP Migration 1.5.0 ou plus récent)</label><br>
@@ -1084,7 +1281,7 @@ class WPMIG_Admin {
 				</fieldset>
 				<p><label for="wpmig-sync-since"><strong>Date de la copie</strong></label><br>
 				<input type="datetime-local" id="wpmig-sync-since">
-				<select id="wpmig-sync-packages" hidden><option value="">Package utilisé pour la copie…</option></select>
+				<select id="wpmig-sync-packages" hidden><option value="">Sauvegarde utilisée pour la copie…</option></select>
 				<span class="description" id="wpmig-sync-since-help">
 					<?php
 					if ( $default ) {
@@ -1136,10 +1333,19 @@ class WPMIG_Admin {
 		$current = WPMIG_Search::current();
 		$tables  = WPMIG_DB_Exporter::site_tables();
 		$history = WPMIG_Search::history();
+		// Old address of a migrated site, when it still differs from the current one.
+		$report  = WPMIG_Report::get();
+		$suggest = '';
+		if ( $report && ! empty( $report['source']['home'] ) && untrailingslashit( $report['source']['home'] ) !== untrailingslashit( home_url() ) ) {
+			$suggest = untrailingslashit( $report['source']['home'] );
+		}
 		?>
 		<div class="wpmig-card wpmig-search" id="wpmig-search" data-state="<?php echo esc_attr( $current ? wp_json_encode( $current->public_state() ) : '' ); ?>">
 			<h2>Rechercher et remplacer dans la base de données</h2>
-			<p>Change une adresse, un domaine, un chemin ou n'importe quel texte dans <strong>tous les contenus du site</strong> (articles, pages, réglages, métadonnées, commandes…), y compris dans les données sérialisées et le JSON, que WordPress ne permet pas de modifier avec un simple « rechercher / remplacer » SQL. Une analyse montre tout ce qui serait modifié avant le moindre changement, et l'opération peut être annulée.</p>
+			<p>Changez une adresse, un domaine ou un texte dans <strong>tout le contenu du site</strong> (articles, pages, réglages, commandes…), y compris dans les données que WordPress mémorise sous forme sérialisée et qu'un simple « rechercher / remplacer » SQL casserait. Une analyse montre ce qui serait modifié avant le moindre changement, et l'opération peut être annulée.</p>
+			<?php if ( $suggest ) : ?>
+				<p class="wpmig-suggest">Ce site a été migré depuis <code><?php echo esc_html( $suggest ); ?></code> : <button type="button" class="button-link" data-search-suggest="<?php echo esc_attr( $suggest ); ?>|<?php echo esc_attr( untrailingslashit( home_url() ) ); ?>">remplacer l'ancienne adresse par l'adresse actuelle</button></p>
+			<?php endif; ?>
 			<form id="wpmig-search-form" <?php echo $current ? 'hidden' : ''; ?>>
 				<table class="form-table" role="presentation"><tbody>
 					<tr>
@@ -1149,34 +1355,39 @@ class WPMIG_Admin {
 					<tr>
 						<th scope="row"><label for="wpmig-search-replace">Remplacer par</label></th>
 						<td><input type="text" id="wpmig-search-replace" class="large-text code" autocomplete="off" spellcheck="false" placeholder="https://www.nouveau-site.fr">
-						<p class="description">Laissez vide pour supprimer le texte trouvé.</p></td>
-					</tr>
-					<tr>
-						<th scope="row">Type de recherche</th>
-						<td>
-							<label><input type="radio" name="wpmig-search-mode" value="url" checked> <strong>URL, domaine ou chemin</strong> — mots entiers : <code>http://a.fr</code> ne touche pas <code>http://a.frite.com</code> ; les variantes <code>https</code>, <code>//</code>, JSON (<code>\/</code>) et encodées sont traitées</label><br>
-							<label><input type="radio" name="wpmig-search-mode" value="text"> <strong>Texte</strong> — toutes les occurrences, où qu'elles soient</label><br>
-							<label><input type="radio" name="wpmig-search-mode" value="regex"> <strong>Expression régulière</strong> — <code>/motif/i</code> ; <code>$1</code>, <code>$2</code>… désignent les groupes capturés (ajoutez <code>u</code> pour les caractères accentués)</label>
-						</td>
-					</tr>
-					<tr>
-						<th scope="row">Options</th>
-						<td>
-							<label><input type="checkbox" id="wpmig-search-case"> Ignorer la casse</label><br>
-							<label data-mode="url"><input type="checkbox" id="wpmig-search-www" checked> Traiter aussi la variante avec / sans <code>www.</code></label>
-							<label data-mode="text" hidden><input type="checkbox" id="wpmig-search-variants" checked> Traiter aussi le texte dans les URL encodées (<code>%2F</code>) et le JSON (<code>\/</code>)</label><br>
-							<label><input type="checkbox" id="wpmig-search-guid"> Modifier aussi les identifiants (<code>guid</code>) des articles <span class="description">— déconseillé : ce ne sont pas des liens, et les flux RSS s'en servent pour reconnaître les articles déjà lus</span></label>
-							<details class="wpmig-tables"><summary>Limiter à certaines tables (<?php echo count( $tables ); ?> tables, toutes par défaut)</summary>
-								<p><button type="button" class="button-link" data-search-tables="all">Tout cocher</button> · <button type="button" class="button-link" data-search-tables="none">Tout décocher</button></p>
-								<div class="wpmig-table-list">
-								<?php foreach ( $tables as $t ) : ?>
-									<label><input type="checkbox" name="wpmig-search-table" value="<?php echo esc_attr( $t['name'] ); ?>" checked> <code><?php echo esc_html( $t['name'] ); ?></code> <span class="description"><?php echo esc_html( number_format_i18n( $t['rows'] ) . ' lignes' ); ?></span></label>
-								<?php endforeach; ?>
-								</div>
-							</details>
-						</td>
+						<p class="description">Laissez vide pour supprimer le texte trouvé. Une adresse est reconnue automatiquement : ses variantes (<code>https</code>, <code>www</code>, formes encodées) sont traitées.</p></td>
 					</tr>
 				</tbody></table>
+				<details class="wpmig-advanced"><summary>Options avancées : type de recherche, casse, tables</summary>
+					<table class="form-table" role="presentation"><tbody>
+						<tr>
+							<th scope="row">Type de recherche</th>
+							<td>
+								<label><input type="radio" name="wpmig-search-mode" value="auto" checked> <strong>Automatique</strong> — adresse, domaine ou chemin si le texte y ressemble, sinon texte</label><br>
+								<label><input type="radio" name="wpmig-search-mode" value="url"> <strong>URL, domaine ou chemin</strong> — mots entiers : <code>http://a.fr</code> ne touche pas <code>http://a.frite.com</code></label><br>
+								<label><input type="radio" name="wpmig-search-mode" value="text"> <strong>Texte</strong> — toutes les occurrences, où qu'elles soient</label><br>
+								<label><input type="radio" name="wpmig-search-mode" value="regex"> <strong>Expression régulière</strong> — <code>/motif/i</code> ; <code>$1</code>, <code>$2</code>… désignent les groupes capturés (ajoutez <code>u</code> pour les caractères accentués)</label>
+							</td>
+						</tr>
+						<tr>
+							<th scope="row">Options</th>
+							<td>
+								<label><input type="checkbox" id="wpmig-search-case"> Ignorer la casse</label><br>
+								<label data-mode="url"><input type="checkbox" id="wpmig-search-www" checked> Traiter aussi la variante avec / sans <code>www.</code></label>
+								<label data-mode="text" hidden><input type="checkbox" id="wpmig-search-variants" checked> Traiter aussi le texte dans les URL encodées (<code>%2F</code>) et le JSON (<code>\/</code>)</label><br>
+								<label><input type="checkbox" id="wpmig-search-guid"> Modifier aussi les identifiants (<code>guid</code>) des articles <span class="description">— déconseillé : ce ne sont pas des liens, et les flux RSS s'en servent pour reconnaître les articles déjà lus</span></label>
+								<details class="wpmig-tables"><summary>Limiter à certaines tables (<?php echo count( $tables ); ?> tables, toutes par défaut)</summary>
+									<p><button type="button" class="button-link" data-search-tables="all">Tout cocher</button> · <button type="button" class="button-link" data-search-tables="none">Tout décocher</button></p>
+									<div class="wpmig-table-list">
+									<?php foreach ( $tables as $t ) : ?>
+										<label><input type="checkbox" name="wpmig-search-table" value="<?php echo esc_attr( $t['name'] ); ?>" checked> <code><?php echo esc_html( $t['name'] ); ?></code> <span class="description"><?php echo esc_html( number_format_i18n( $t['rows'] ) . ' lignes' ); ?></span></label>
+									<?php endforeach; ?>
+									</div>
+								</details>
+							</td>
+						</tr>
+					</tbody></table>
+				</details>
 				<p><button type="submit" class="button button-primary">Analyser</button> <span class="description">Rien n'est modifié avant votre confirmation. Les noms de réglages et de métadonnées, les mots de passe et les tables d'autres sites ne sont jamais touchés.</span></p>
 			</form>
 			<div id="wpmig-search-panel"></div>
@@ -1208,13 +1419,13 @@ class WPMIG_Admin {
 		}
 		?>
 		<div class="wpmig-card wpmig-import">
-			<h2>Importer un site sur ce WordPress</h2>
-			<p>Pour remplacer <strong>ce site</strong> par un autre sans passer par le FTP : sur le site d'origine, créez un package puis cliquez sur « Transfert direct », et collez ici le lien obtenu. L'installeur du package est placé sur ce serveur et récupère l'archive directement ; les accès à la base de données sont repris de ce site.</p>
+			<h2>Ou copier directement un autre site (sans FTP)</h2>
+			<p>Sur le site d'origine, créez une sauvegarde puis cliquez sur « Transfert direct » : collez ici le lien obtenu. L'installeur de la sauvegarde est placé sur ce serveur et récupère l'archive directement ; les accès à la base de données sont repris de ce site.</p>
 			<form id="wpmig-import-form" class="wpmig-copy">
 				<input type="url" id="wpmig-import-link" class="large-text code" required placeholder="https://site-origine.fr/wp-admin/admin-ajax.php?action=wpmig_transfer&amp;id=…&amp;key=…">
 				<button type="submit" class="button button-primary">Importer</button>
 			</form>
-			<p class="description">Attention : tous les contenus, réglages, extensions et comptes de ce site seront remplacés par ceux du site d'origine. Le mot de passe de l'installeur du package vous sera demandé.</p>
+			<p class="description">Attention : tous les contenus, réglages, extensions et comptes de ce site seront remplacés par ceux du site d'origine. Le mot de passe de l'installeur de la sauvegarde vous sera demandé.</p>
 			<div id="wpmig-import-msg"></div>
 		</div>
 		<?php
@@ -1226,20 +1437,30 @@ class WPMIG_Admin {
 	private static function render_help() {
 		?>
 		<div class="wpmig-card wpmig-help">
-			<h2>Comment migrer le site ?</h2>
+			<h2>Je change d'hébergeur ou de nom de domaine</h2>
 			<ol>
-				<li><strong>Créez un package</strong> ici puis téléchargez l'<em>archive</em> (<code>.wpmig</code>) et l'<em>installeur</em> (<code>installer.php</code>).</li>
-				<li>Sur le nouvel hébergement, <strong>créez une base de données MySQL</strong> vide (nom, utilisateur, mot de passe) depuis le panneau de l'hébergeur.</li>
+				<li>Sur l'ancien site : onglet <a href="<?php echo esc_url( self::tab_url( 'backups' ) ); ?>"><strong>Sauvegardes</strong></a>, puis <strong>Sauvegarde complète</strong>. Téléchargez l'<em>archive</em> (<code>.wpmig</code>) et l'<em>installeur</em> (<code>installer.php</code>) et notez le mot de passe affiché.</li>
+				<li>Chez le nouvel hébergeur, <strong>créez une base de données MySQL</strong> vide (nom, utilisateur, mot de passe).</li>
 				<li><strong>Envoyez les deux fichiers</strong> par FTP/SFTP (en mode <em>binaire</em>) dans le dossier du site, par exemple <code>public_html/</code>. Le dossier peut être vide ou contenir un ancien WordPress, qui sera remplacé.</li>
-				<li>Ouvrez <code>https://nouveau-domaine.fr/installer.php</code> dans le navigateur et suivez les étapes : vérifications, base de données, installation. Les URL et chemins sont remplacés automatiquement, y compris dans les données sérialisées.</li>
+				<li>Ouvrez <code>https://nouveau-domaine.fr/installer.php</code> dans le navigateur et suivez les étapes. Les adresses et chemins sont remplacés automatiquement, y compris dans les données sérialisées.</li>
 				<li>Connectez-vous avec vos identifiants habituels puis <strong>supprimez les fichiers d'installation</strong> (bouton proposé à la fin de l'installation et dans l'administration).</li>
 			</ol>
-			<p><strong>Transfert direct de serveur à serveur</strong> : au lieu d'envoyer l'archive par FTP, cliquez sur « Transfert direct » et déposez seulement <code>installer.php</code> sur le nouveau serveur ; l'installeur y télécharge l'archive directement depuis ce site, avec le lien secret et temporaire fourni.</p>
-			<p><strong>Travail sur une copie</strong> : si le site d'origine reste en ligne pendant que vous travaillez sur la copie, « Synchroniser le contenu » y rapatrie ensuite les commandes, clients, produits, articles et pages créés entre-temps.</p>
-			<p><strong>Changer une adresse ou un texte partout</strong> : « Rechercher et remplacer » modifie toute la base de données (données sérialisées et JSON comprises) après une analyse, et peut être annulé.</p>
-			<p class="description">Accès SSH ? L'installeur fonctionne aussi en ligne de commande : <code>php installer.php --help</code>. Et le package peut être créé avec WP-CLI : <code>wp migration build</code>.</p>
+			<p><strong>Sans FTP</strong> : sur l'ancien site, cliquez sur « Transfert direct » à côté de la sauvegarde et déposez seulement <code>installer.php</code> sur le nouveau serveur ; il télécharge l'archive lui-même avec le lien secret et temporaire fourni. Ou, sur un WordPress déjà installé, utilisez l'onglet <a href="<?php echo esc_url( self::tab_url( 'receive' ) ); ?>">Recevoir un site</a>.</p>
+		</div>
+		<div class="wpmig-card wpmig-help">
+			<h2>Je travaille sur une copie pendant que le site en ligne continue de vivre</h2>
+			<ol>
+				<li>Copiez le site sur le serveur de travail (voir ci-dessus).</li>
+				<li>Sur le site en ligne : onglet <a href="<?php echo esc_url( self::tab_url( 'sync' ) ); ?>"><strong>Synchronisation</strong></a>, <em>1. autoriser la synchronisation</em>, puis copiez le lien.</li>
+				<li>Sur la copie, quand vous êtes prêt : <em>2. récupérer le contenu</em>, collez le lien et analysez. Les commandes, clients, produits, articles et pages créés entre-temps arrivent après votre confirmation.</li>
+				<li>Recommencez autant que nécessaire, puis révoquez le lien.</li>
+			</ol>
+		</div>
+		<div class="wpmig-card wpmig-help">
+			<h2>Je veux changer une adresse ou un texte partout</h2>
+			<p>Onglet <a href="<?php echo esc_url( self::tab_url( 'search' ) ); ?>"><strong>Rechercher / Remplacer</strong></a> : saisissez l'ancienne et la nouvelle valeur, lisez l'analyse, sauvegardez la base de données d'un clic, puis remplacez. Le remplacement peut être annulé.</p>
+			<p class="description">Accès SSH ? L'installeur fonctionne aussi en ligne de commande : <code>php installer.php --help</code>. Et l'extension se pilote avec WP-CLI : <code>wp migration build</code>, <code>wp migration sync</code>, <code>wp migration replace</code>.</p>
 		</div>
 		<?php
 	}
 }
-

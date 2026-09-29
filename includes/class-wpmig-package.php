@@ -161,10 +161,10 @@ class WPMIG_Package {
 			'sizes'     => array(),
 		);
 		if ( ! wp_mkdir_p( $package->work_dir() ) ) {
-			throw new WPMIG_Exception( 'Impossible de créer le dossier de travail du package.' );
+			throw new WPMIG_Exception( 'Impossible de créer le dossier de travail de la sauvegarde.' );
 		}
 		WPMIG_Plugin::protect_dir( $package->work_dir() );
-		$package->log( 'Package créé (WP Migration ' . WPMIG_VERSION . ', WordPress ' . get_bloginfo( 'version' ) . ', PHP ' . PHP_VERSION . ').' );
+		$package->log( 'Sauvegarde créée (WP Migration ' . WPMIG_VERSION . ', WordPress ' . get_bloginfo( 'version' ) . ', PHP ' . PHP_VERSION . ').' );
 		$package->save();
 		return $package;
 	}
@@ -340,7 +340,7 @@ class WPMIG_Package {
 	 */
 	public function start_build() {
 		if ( 'scanned' !== $this->data['status'] ) {
-			throw new WPMIG_Exception( 'Le package n\'est pas prêt à être construit.' );
+			throw new WPMIG_Exception( 'La sauvegarde n\'est pas prête à être créée.' );
 		}
 		$this->data['status']  = 'building';
 		$this->data['phase']   = 'dump';
@@ -446,7 +446,7 @@ class WPMIG_Package {
 		$this->data['status']   = 'complete';
 		$this->data['phase']    = 'complete';
 		$this->data['progress'] = 100;
-		$this->data['message']  = 'Package prêt.';
+		$this->data['message']  = 'Sauvegarde prête.';
 		$this->data['sizes']    = array(
 			'archive'   => (int) @filesize( $this->archive_path() ), // phpcs:ignore
 			'installer' => (int) @filesize( $this->installer_path() ), // phpcs:ignore
@@ -455,7 +455,7 @@ class WPMIG_Package {
 		// Temporary files are no longer needed.
 		WPMIG_Plugin::rrmdir( rtrim( $this->work_dir(), '/' ) );
 		$this->data['scan']['queue'] = array();
-		$this->log( sprintf( 'Package terminé : archive de %s.', size_format( $this->data['sizes']['archive'], 1 ) ) );
+		$this->log( sprintf( 'Sauvegarde terminée : archive de %s.', size_format( $this->data['sizes']['archive'], 1 ) ) );
 		// Saved first, so that the new package counts among those to keep.
 		$this->save();
 		WPMIG_Cleanup::after_build( $this );
