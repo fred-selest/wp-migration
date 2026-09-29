@@ -294,6 +294,154 @@ class WPMIG_CLI {
 	}
 
 	/**
+	 * On the source site: create the link that lets another site synchronize its content from this one.
+	 *
+	 * ## OPTIONS
+	 *
+	 * [--hours=<hours>]
+	 * : Lifetime of the link. Default: 24.
+	 *
+	 * [--revoke]
+	 * : Revoke the link.
+	 *
+	 * @subcommand sync-link
+	 * @param array $args       Arguments.
+	 * @param array $assoc_args Options.
+	 */
+	public function sync_link( $args, $assoc_args ) {
+		if ( isset( $assoc_args['revoke'] ) ) {
+			WPMIG_Sync_Source::revoke();
+			WP_CLI::success( 'Lien de synchronisation révoqué.' );
+			return;
+		}
+		$link = WPMIG_Sync_Source::create( isset( $assoc_args['hours'] ) ? (int) $assoc_args['hours'] : 24 );
+		WP_CLI::log( $link['url'] );
+		WP_CLI::success( 'Lien de synchronisation valable jusqu\'au ' . $link['expires_h'] . '. Sur le site à mettre à jour : wp migration sync \'<lien>\'' );
+	}
+
+	/**
+	 * Bring into this site the content created or modified on another site since this one was copied from it.
+	 *
+	 * Orders, customers, coupons and comments come from the source. Products, posts, pages
+	 * and media modified on both sides keep the version of this site (products receive the
+	 * stock of the source), unless --force. Order numbers are kept. Can be undone with
+	 * wp migration sync-undo.
+	 *
+	 * ## OPTIONS
+	 *
+	 * <link>
+	 * : Synchronization link created on the source site (wp migration sync-link).
+	 *
+	 * [--types=<types>]
+	 * : Comma separated: orders, customers, products, coupons, posts, media, comments. Default: all.
+	 *
+	 * [--since=<date>]
+	 * : Date of the copy, local time "YYYY-MM-DD HH:MM". Default: from the migration report or the last synchronization.
+	 *
+	 * [--force]
+	 * : Also replace the products, posts, pages and media modified on this site.
+	 *
+	 * [--dry-run]
+	 * : Only analyze.
+	 *
+	 * [--yes]
+	 * : Do not ask for confirmation.
+	 *
+	 * ## EXAMPLES
+	 *
+	 *     wp migration sync 'https://www.example.com/wp-admin/admin-ajax.php?action=wpmig_sync&key=...' --dry-run
+	 *     wp migration sync '...' --types=orders,customers,products --yes
+	 *
+	 * @param array $args       Arguments.
+	 * @param array $assoc_args Options.
+	 */
+	public function sync( $args, $assoc_args ) {
+		$kinds = isset( $assoc_args['types'] ) ? array_map( 'trim', explode( ',', $assoc_args['types'] ) ) : WPMIG_Sync::KINDS;
+		try {
+			$sync = WPMIG_Sync::start( $args[0], $kinds, isset( $assoc_args['since'] ) ? $assoc_args['since'] : '', isset( $assoc_args['force'] ) );
+			$state = $sync->run();
+			if ( 'error' === $state['status'] ) {
+				WP_CLI::error( $state['error'] );
+			}
+			WP_CLI::log( sprintf( 'Site d\'origine : %s — contenus créés ou modifiés depuis : %s', $state['source'], $state['threshold_h'] ) );
+			$this->sync_summary( $state );
+			if ( isset( $assoc_args['dry-run'] ) || ! $sync->state()['lines'] ) {
+				WPMIG_Sync::dismiss();
+				WP_CLI::success( isset( $assoc_args['dry-run'] ) ? 'Analyse terminée, rien n\'a été modifié.' : 'Rien à synchroniser.' );
+				return;
+			}
+			WP_CLI::confirm( 'Importer ces contenus sur ce site ?', $assoc_args );
+			$sync->confirm();
+			$state = $sync->run(
+				function ( $s ) {
+					WP_CLI::log( '  ' . $s['message'] );
+				}
+			);
+			if ( 'error' === $state['status'] ) {
+				WP_CLI::error( $state['error'] );
+			}
+			$this->sync_summary( $state );
+			WP_CLI::success( 'Synchronisation terminée. Annulation possible : wp migration sync-undo' );
+		} catch ( WPMIG_Exception $e ) {
+			WP_CLI::error( $e->getMessage() );
+		}
+	}
+
+	/**
+	 * Undo the last synchronization.
+	 *
+	 * [--yes]
+	 * : Do not ask for confirmation.
+	 *
+	 * @subcommand sync-undo
+	 * @param array $args       Arguments.
+	 * @param array $assoc_args Options.
+	 */
+	public function sync_undo( $args, $assoc_args ) {
+		$sync = WPMIG_Sync::current();
+		if ( ! $sync || 'done' !== $sync->state()['status'] ) {
+			WP_CLI::error( 'Aucune synchronisation terminée à annuler.' );
+		}
+		WP_CLI::confirm( 'Annuler la synchronisation du ' . wpmig_date( $sync->state()['started'] ) . ' ?', $assoc_args );
+		try {
+			$sync->undo();
+			$state = $sync->run();
+		} catch ( WPMIG_Exception $e ) {
+			WP_CLI::error( $e->getMessage() );
+		}
+		if ( 'error' === $state['status'] ) {
+			WP_CLI::error( $state['error'] );
+		}
+		WP_CLI::success( $state['message'] );
+	}
+
+	/**
+	 * Print counts and notes of a synchronization.
+	 *
+	 * @param array $state Public state.
+	 */
+	private function sync_summary( array $state ) {
+		$labels  = WPMIG_Sync::labels();
+		$actions = 'done' === $state['status'] ? WPMIG_Sync::done_labels() : WPMIG_Sync::action_labels();
+		foreach ( $state['counts'] as $kind => $counts ) {
+			$parts = array();
+			foreach ( $counts as $action => $n ) {
+				$parts[] = $n . ' ' . ( isset( $actions[ $action ] ) ? $actions[ $action ] : $action );
+			}
+			WP_CLI::log( sprintf( '  %-22s %s', ( isset( $labels[ $kind ] ) ? $labels[ $kind ] : $kind ) . ' :', implode( ', ', $parts ) ) );
+		}
+		foreach ( $state['notes'] as $note ) {
+			WP_CLI::log( '  - ' . $note[2] );
+		}
+		foreach ( $state['warnings'] as $w ) {
+			WP_CLI::warning( $w );
+		}
+		if ( ! empty( $state['files']['total'] ) ) {
+			WP_CLI::log( sprintf( '  Fichiers des médias : %d téléchargé(s), %d déjà présent(s), %d en échec', $state['files']['downloaded'], $state['files']['total'] - $state['files']['downloaded'] - $state['files']['failed'], $state['files']['failed'] ) );
+		}
+	}
+
+	/**
 	 * List the packages.
 	 *
 	 * [--format=<format>]

@@ -62,6 +62,10 @@ class WPMIG_DB_Exporter {
 			if ( empty( $row['Engine'] ) && isset( $row['Comment'] ) && 'VIEW' === strtoupper( $row['Comment'] ) ) {
 				continue;
 			}
+			// Correspondences of the content synchronization: specific to this site.
+			if ( $wpdb->prefix . 'wpmig_sync_map' === $row['Name'] ) {
+				continue;
+			}
 			$tables[ $row['Name'] ] = array(
 				'name'   => $row['Name'],
 				'rows'   => (int) $row['Rows'],
@@ -175,6 +179,8 @@ class WPMIG_DB_Exporter {
 				'table'   => null,
 				'rows'    => 0,
 				'written' => 0,
+				// Start of the export: content changed after it is not in the package.
+				'started' => gmdate( 'Y-m-d H:i:s' ),
 			);
 			$header  = "-- WP Migration " . WPMIG_VERSION . " SQL dump\n";
 			$header .= '-- Source : ' . home_url() . "\n";
@@ -325,8 +331,8 @@ class WPMIG_DB_Exporter {
 		global $wpdb;
 		$opts = $this->package->data['options'];
 		if ( $name === $wpdb->options ) {
-			// Our own post-install flag and migration report must never travel with a package.
-			$where = "option_name NOT IN ('wpmig_installed', 'wpmig_report')";
+			// Our own state (post-install flag, report, synchronization) never travels with a package.
+			$where = "option_name NOT IN ('wpmig_installed', 'wpmig_report', 'wpmig_sync_link', 'wpmig_sync_state', 'wpmig_sync_history')";
 			if ( ! empty( $opts['skip_transients'] ) ) {
 				$where .= " AND option_name NOT LIKE '\\_transient\\_%' AND option_name NOT LIKE '\\_site\\_transient\\_%'";
 			}

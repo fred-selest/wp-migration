@@ -30,6 +30,9 @@ class WPMIG_Admin {
 		add_action( 'wp_ajax_wpmig_transfer_link', array( __CLASS__, 'ajax_transfer_link' ) );
 		add_action( 'wp_ajax_wpmig_transfer_revoke', array( __CLASS__, 'ajax_transfer_revoke' ) );
 		add_action( 'wp_ajax_wpmig_import_prepare', array( __CLASS__, 'ajax_import_prepare' ) );
+		foreach ( array( 'sync_probe', 'sync_start', 'sync_step', 'sync_confirm', 'sync_undo', 'sync_dismiss', 'sync_link', 'sync_revoke' ) as $action ) {
+			add_action( 'wp_ajax_wpmig_' . $action, array( __CLASS__, 'ajax_' . $action ) );
+		}
 		add_action( 'admin_post_wpmig_download', array( __CLASS__, 'download' ) );
 		add_action( 'admin_post_wpmig_cleanup_install', array( __CLASS__, 'cleanup_install' ) );
 		add_action( 'admin_post_wpmig_cleanup_settings', array( __CLASS__, 'cleanup_settings' ) );
@@ -187,6 +190,118 @@ class WPMIG_Admin {
 		} catch ( Exception $e ) {
 			wp_send_json_error( array( 'message' => $e->getMessage() ) );
 		}
+	}
+
+	/**
+	 * Current synchronization or error.
+	 *
+	 * @return WPMIG_Sync
+	 */
+	private static function request_sync() {
+		$sync = WPMIG_Sync::current();
+		if ( ! $sync ) {
+			wp_send_json_error( array( 'message' => 'Aucune synchronisation en cours.' ) );
+		}
+		return $sync;
+	}
+
+	/**
+	 * Information about the source of a link (default date, packages).
+	 */
+	public static function ajax_sync_probe() {
+		self::check_ajax();
+		$link = isset( $_POST['link'] ) ? trim( sanitize_text_field( wp_unslash( $_POST['link'] ) ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification
+		try {
+			wp_send_json_success( WPMIG_Sync::probe( $link ) );
+		} catch ( Exception $e ) {
+			wp_send_json_error( array( 'message' => $e->getMessage() ) );
+		}
+	}
+
+	/**
+	 * Start a synchronization (analysis).
+	 */
+	public static function ajax_sync_start() {
+		self::check_ajax();
+		// phpcs:disable WordPress.Security.NonceVerification -- checked in check_ajax().
+		$link  = isset( $_POST['link'] ) ? trim( sanitize_text_field( wp_unslash( $_POST['link'] ) ) ) : '';
+		$kinds = isset( $_POST['kinds'] ) ? array_map( 'sanitize_key', explode( ',', sanitize_text_field( wp_unslash( $_POST['kinds'] ) ) ) ) : array();
+		$since = isset( $_POST['since'] ) ? sanitize_text_field( wp_unslash( $_POST['since'] ) ) : '';
+		$force = ! empty( $_POST['force'] );
+		// phpcs:enable
+		try {
+			$sync = WPMIG_Sync::start( $link, $kinds, $since, $force );
+			wp_send_json_success( $sync->step( microtime( true ) + WPMIG_Plugin::time_budget() ) );
+		} catch ( Exception $e ) {
+			wp_send_json_error( array( 'message' => $e->getMessage() ) );
+		}
+	}
+
+	/**
+	 * Continue the synchronization.
+	 */
+	public static function ajax_sync_step() {
+		self::check_ajax();
+		wp_send_json_success( self::request_sync()->step( microtime( true ) + WPMIG_Plugin::time_budget() ) );
+	}
+
+	/**
+	 * Import after the analysis.
+	 */
+	public static function ajax_sync_confirm() {
+		self::check_ajax();
+		$sync = self::request_sync();
+		try {
+			$sync->confirm();
+			wp_send_json_success( $sync->step( microtime( true ) + WPMIG_Plugin::time_budget() ) );
+		} catch ( Exception $e ) {
+			wp_send_json_error( array( 'message' => $e->getMessage() ) );
+		}
+	}
+
+	/**
+	 * Undo the last synchronization.
+	 */
+	public static function ajax_sync_undo() {
+		self::check_ajax();
+		$sync = self::request_sync();
+		try {
+			$sync->undo();
+			wp_send_json_success( $sync->step( microtime( true ) + WPMIG_Plugin::time_budget() ) );
+		} catch ( Exception $e ) {
+			wp_send_json_error( array( 'message' => $e->getMessage() ) );
+		}
+	}
+
+	/**
+	 * Close the synchronization panel.
+	 */
+	public static function ajax_sync_dismiss() {
+		self::check_ajax();
+		try {
+			WPMIG_Sync::dismiss();
+			wp_send_json_success();
+		} catch ( Exception $e ) {
+			wp_send_json_error( array( 'message' => $e->getMessage() ) );
+		}
+	}
+
+	/**
+	 * Source side: create the synchronization link.
+	 */
+	public static function ajax_sync_link() {
+		self::check_ajax();
+		$hours = isset( $_POST['hours'] ) ? absint( $_POST['hours'] ) : 24; // phpcs:ignore WordPress.Security.NonceVerification
+		wp_send_json_success( WPMIG_Sync_Source::create( $hours ) );
+	}
+
+	/**
+	 * Source side: revoke the synchronization link.
+	 */
+	public static function ajax_sync_revoke() {
+		self::check_ajax();
+		WPMIG_Sync_Source::revoke();
+		wp_send_json_success();
 	}
 
 	/**
@@ -400,8 +515,10 @@ class WPMIG_Admin {
 		self::render_report_card();
 		self::render_wizard();
 		self::render_packages();
+		self::render_sync_source();
 		self::render_cleanup();
 		self::render_import();
+		self::render_sync();
 		self::render_help();
 		echo '</div>';
 	}
@@ -804,6 +921,109 @@ class WPMIG_Admin {
 	}
 
 	/**
+	 * Source side of the synchronization.
+	 */
+	private static function render_sync_source() {
+		$link = WPMIG_Sync_Source::link();
+		?>
+		<div class="wpmig-card wpmig-sync-source" id="wpmig-sync-source">
+			<h2>Autoriser la synchronisation depuis ce site</h2>
+			<p>Pour récupérer sur une copie de travail de ce site (préproduction, développement) les commandes, clients, produits, articles et pages créés ou modifiés ici depuis la copie : créez un lien et collez-le dans <strong>WP Migration → Synchroniser le contenu</strong> sur la copie. Ce site est seulement lu, jamais modifié.</p>
+			<div class="wpmig-sync-link-status">
+				<?php if ( $link ) : ?>
+					<p><span class="wpmig-transfer-active">● Lien actif jusqu'au <?php echo esc_html( wpmig_date( $link['expires'] ) ); ?></span>
+					<?php
+					if ( ! empty( $link['log'] ) ) {
+						$last = end( $link['log'] );
+						echo ' — ' . esc_html( sprintf( 'dernière utilisation : %s (%s)', wpmig_date( $last[0] ), $last[1] ) );
+					}
+					?>
+					</p>
+				<?php endif; ?>
+			</div>
+			<p>
+				<label>Validité <select id="wpmig-sync-hours"><option value="24">24 heures</option><option value="72">3 jours</option><option value="168">7 jours</option></select></label>
+				<button type="button" class="button" data-sync-link><?php echo $link ? 'Créer un nouveau lien' : 'Créer un lien de synchronisation'; ?></button>
+				<?php if ( $link ) : ?>
+					<button type="button" class="button-link wpmig-danger" data-sync-revoke>Révoquer le lien</button>
+				<?php endif; ?>
+			</p>
+			<div id="wpmig-sync-link-panel"></div>
+		</div>
+		<?php
+	}
+
+	/**
+	 * Destination side of the synchronization.
+	 */
+	private static function render_sync() {
+		$current = WPMIG_Sync::current();
+		$report  = WPMIG_Report::get();
+		$default = '';
+		if ( $report && ! empty( $report['source']['home'] ) ) {
+			$default = WPMIG_Sync::default_threshold( $report['source']['home'] );
+		}
+		$labels = WPMIG_Sync::labels();
+		?>
+		<div class="wpmig-card wpmig-sync" id="wpmig-sync" data-state="<?php echo esc_attr( $current ? wp_json_encode( $current->public_state() ) : '' ); ?>" data-labels="<?php echo esc_attr( wp_json_encode( array( 'kinds' => $labels, 'actions' => WPMIG_Sync::action_labels(), 'done' => WPMIG_Sync::done_labels() ) ) ); ?>">
+			<h2>Synchroniser le contenu depuis le site d'origine</h2>
+			<p>Vous travaillez sur ce site pendant que le site d'origine reste en ligne ? Récupérez ici ce qui y a été créé ou modifié depuis la copie : <strong>commandes, clients, produits (et leur stock), codes promo, articles, pages, médias, avis</strong>. Les numéros de commande sont conservés ; vos modifications faites ici sur les produits, pages et médias sont gardées. Une analyse montre tout avant l'import, et une synchronisation peut être annulée.</p>
+			<form id="wpmig-sync-form" <?php echo $current ? 'hidden' : ''; ?>>
+				<p><label for="wpmig-sync-link"><strong>Lien de synchronisation</strong> (créé sur le site d'origine, avec WP Migration 1.5.0 ou plus récent)</label><br>
+				<input type="url" id="wpmig-sync-link" class="large-text code" required placeholder="https://site-origine.fr/wp-admin/admin-ajax.php?action=wpmig_sync&amp;key=…"></p>
+				<fieldset class="wpmig-sync-kinds"><legend><strong>Contenus</strong></legend>
+					<?php foreach ( $labels as $kind => $label ) : ?>
+						<label><input type="checkbox" name="kinds" value="<?php echo esc_attr( $kind ); ?>" checked> <?php echo esc_html( $label ); ?></label>
+					<?php endforeach; ?>
+				</fieldset>
+				<p><label for="wpmig-sync-since"><strong>Date de la copie</strong></label><br>
+				<input type="datetime-local" id="wpmig-sync-since">
+				<select id="wpmig-sync-packages" hidden><option value="">Package utilisé pour la copie…</option></select>
+				<span class="description" id="wpmig-sync-since-help">
+					<?php
+					if ( $default ) {
+						echo esc_html( sprintf( 'Laissez vide pour utiliser le %s (%s).', wpmig_date( strtotime( $default . ' UTC' ) ), WPMIG_Sync::history() ? 'dernière synchronisation ou rapport de migration' : 'rapport de migration' ) );
+					} else {
+						echo esc_html( 'Moment où ce site a été copié depuis le site d\'origine (laissez vide après une première synchronisation).' );
+					}
+					?>
+				</span></p>
+				<p><label><input type="checkbox" id="wpmig-sync-force"> Remplacer aussi les produits, pages et médias modifiés sur ce site (sinon leur version est conservée, seuls le stock et les ventes des produits sont repris)</label></p>
+				<p><button type="submit" class="button button-primary">Analyser</button> <span class="description">Rien n'est modifié avant votre confirmation.</span></p>
+			</form>
+			<div id="wpmig-sync-panel"></div>
+			<?php
+			$history = WPMIG_Sync::history();
+			if ( $history ) :
+				?>
+				<details class="wpmig-sync-history"><summary>Synchronisations précédentes (<?php echo esc_html( count( $history ) ); ?>)</summary>
+					<table class="widefat striped"><thead><tr><th>Date</th><th>Site d'origine</th><th>Résultat</th></tr></thead><tbody>
+					<?php foreach ( $history as $h ) : ?>
+						<tr>
+							<td><?php echo esc_html( wpmig_date( $h['finished'] ) ); ?></td>
+							<td><code><?php echo esc_html( $h['source'] ); ?></code></td>
+							<td>
+								<?php
+								$parts = array();
+								foreach ( $h['counts'] as $kind => $counts ) {
+									$n = ( isset( $counts['insert'] ) ? $counts['insert'] : 0 ) + ( isset( $counts['update'] ) ? $counts['update'] : 0 ) + ( isset( $counts['stock'] ) ? $counts['stock'] : 0 );
+									if ( $n ) {
+										$parts[] = ( isset( $labels[ $kind ] ) ? $labels[ $kind ] : $kind ) . ' : ' . $n;
+									}
+								}
+								echo esc_html( ( 'undone' === $h['status'] ? 'Annulée. ' : '' ) . ( $parts ? implode( ', ', $parts ) : 'rien à importer' ) );
+								?>
+							</td>
+						</tr>
+					<?php endforeach; ?>
+					</tbody></table>
+				</details>
+			<?php endif; ?>
+		</div>
+		<?php
+	}
+
+	/**
 	 * Import from another site (direct transfer link).
 	 */
 	private static function render_import() {
@@ -839,6 +1059,7 @@ class WPMIG_Admin {
 				<li>Connectez-vous avec vos identifiants habituels puis <strong>supprimez les fichiers d'installation</strong> (bouton proposé à la fin de l'installation et dans l'administration).</li>
 			</ol>
 			<p><strong>Transfert direct de serveur à serveur</strong> : au lieu d'envoyer l'archive par FTP, cliquez sur « Transfert direct » et déposez seulement <code>installer.php</code> sur le nouveau serveur ; l'installeur y télécharge l'archive directement depuis ce site, avec le lien secret et temporaire fourni.</p>
+			<p><strong>Travail sur une copie</strong> : si le site d'origine reste en ligne pendant que vous travaillez sur la copie, « Synchroniser le contenu » y rapatrie ensuite les commandes, clients, produits, articles et pages créés entre-temps.</p>
 			<p class="description">Accès SSH ? L'installeur fonctionne aussi en ligne de commande : <code>php installer.php --help</code>. Et le package peut être créé avec WP-CLI : <code>wp migration build</code>.</p>
 		</div>
 		<?php

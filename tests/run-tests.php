@@ -320,5 +320,43 @@ check( 'liste en fin de texte fermée', '<ul><li>x</li></ul>', WPMIG_Updater::ma
 $header = file_get_contents( dirname( __DIR__ ) . '/wp-migration.php' );
 check( 'en-tête Update URI', 1, preg_match( '/^ \* Update URI:\s+https:\/\/github\.com\/' . preg_quote( WPMIG_Updater::REPO, '/' ) . '$/m', $header ) );
 
+echo "\nSynchronisation\n";
+if ( ! function_exists( 'wp_parse_url' ) ) {
+	function wp_parse_url( $url, $component = -1 ) {
+		return parse_url( $url, $component );
+	}
+}
+if ( ! function_exists( 'esc_sql' ) ) {
+	function esc_sql( $s ) {
+		return addslashes( $s );
+	}
+}
+require dirname( __DIR__ ) . '/includes/class-wpmig-sync-source.php';
+require dirname( __DIR__ ) . '/includes/class-wpmig-sync-db.php';
+require dirname( __DIR__ ) . '/includes/class-wpmig-sync.php';
+check( 'empreinte d\'un contenu', 'shop_order|2026-09-29 05:25:04', WPMIG_Sync_Source::fingerprint( 'orders', array( 'post_type' => 'shop_order', 'post_date_gmt' => '2026-09-29 05:25:04' ) ) );
+check( 'empreinte d\'un client', 'client-1', WPMIG_Sync_Source::fingerprint( 'customers', array( 'user_login' => 'client-1' ) ) );
+check( 'empreinte d\'un commentaire', '2026-09-29 05:25:07|marie@example.org', WPMIG_Sync_Source::fingerprint( 'comments', array( 'post_date_gmt' => '2026-09-29 05:25:07', 'comment_author_email' => 'Marie@Example.org' ) ) );
+$binary  = array( 'a' => 'texte é', 'b' => "\xff\x00\xfe", 'c' => null, 'd' => '12' );
+$encoded = WPMIG_Sync_Source::encode_row( $binary );
+check( 'valeur binaire encodée', true, is_array( $encoded['b'] ) && isset( $encoded['b']['b64'] ) && 'texte é' === $encoded['a'] );
+check( 'valeur binaire restituée', $binary, WPMIG_Sync_DB::decode_row( json_decode( json_encode( $encoded ), true ) ) );
+check( 'condition SQL avec NULL', "`order_id` = '5' AND `parent` IS NULL", WPMIG_Sync_DB::where( array( 'order_id' => 5, 'parent' => null ) ) );
+$valid = 'https://www.exemple.fr/wp-admin/admin-ajax.php?action=wpmig_sync&key=0123456789abcdef0123456789abcdef';
+check( 'lien de synchronisation valide', $valid, WPMIG_Sync::check_link( ' ' . $valid . ' ' ) );
+foreach ( array(
+	'lien de transfert refusé' => 'https://www.exemple.fr/wp-admin/admin-ajax.php?action=wpmig_transfer&id=x&key=0123456789abcdef0123456789abcdef',
+	'clé invalide refusée'     => 'https://www.exemple.fr/wp-admin/admin-ajax.php?action=wpmig_sync&key=zz',
+	'protocole refusé'         => 'ftp://www.exemple.fr/wp-admin/admin-ajax.php?action=wpmig_sync&key=0123456789abcdef0123456789abcdef',
+) as $name => $link ) {
+	try {
+		WPMIG_Sync::check_link( $link );
+		check( $name, 'exception', 'acceptée' );
+	} catch ( WPMIG_Exception $e ) {
+		check( $name, 'exception', 'exception' );
+	}
+}
+check( 'ordre d\'application : dépendances d\'abord', array( 'media', 'customers', 'products', 'coupons', 'posts', 'orders', 'comments' ), WPMIG_Sync::KINDS );
+
 echo "\n" . ( $count - $failures ) . '/' . $count . " tests réussis\n";
 exit( $failures ? 1 : 0 );

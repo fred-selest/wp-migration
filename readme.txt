@@ -4,7 +4,7 @@ Tags: migration, duplicate, clone, backup, move
 Requires at least: 4.9
 Tested up to: 7.1
 Requires PHP: 5.6
-Stable tag: 1.4.0
+Stable tag: 1.5.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -24,6 +24,7 @@ WP Migration crée un package (archive .wpmig + installer.php) à déposer sur l
 * Rapport de migration vérifié (fichiers, tables, nombre de lignes, erreurs SQL) conservé dans l'administration du nouveau site.
 * Commandes WP-CLI (wp migration build) et installeur en ligne de commande.
 * Mises à jour automatiques depuis les releases GitHub.
+* Synchronisation du contenu (commandes, clients, produits, articles, pages, médias) depuis le site d'origine vers une copie de travail.
 
 Multisite non pris en charge.
 
@@ -34,6 +35,9 @@ Multisite non pris en charge.
 3. Envoyer l'archive et installer.php sur le nouveau serveur puis ouvrir installer.php dans le navigateur.
 
 == Changelog ==
+
+= 1.5.0 =
+* Synchronisation du contenu : récupérer sur une copie de travail les commandes, clients, produits (et stock), codes promo, articles, pages, médias et avis créés ou modifiés sur le site d'origine depuis la copie, avec analyse préalable et annulation.
 
 = 1.4.0 =
 * Mises à jour depuis les releases GitHub : avis dans l'administration, journal des modifications, mise à jour en un clic, automatique ou avec WP-CLI.
