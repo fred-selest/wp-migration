@@ -442,6 +442,145 @@ class WPMIG_CLI {
 	}
 
 	/**
+	 * Search and replace in the database, serialization-safe, with an analysis first and an undo.
+	 *
+	 * Works in every text column of the site tables (posts, options, meta, orders...),
+	 * including serialized PHP data and JSON. Setting names, meta keys, passwords and post
+	 * guids are never changed (unless --guid). Can be undone with wp migration replace-undo.
+	 *
+	 * ## OPTIONS
+	 *
+	 * <search>
+	 * : Text, URL, path or (with --regex) pattern such as "/old(\d+)/i".
+	 *
+	 * <replace>
+	 * : Replacement. Use "$1"... for the captured groups of a pattern.
+	 *
+	 * [--mode=<mode>]
+	 * : "url" (whole words, http/https/JSON/encoded variants), "text" (every occurrence) or "regex".
+	 * ---
+	 * default: url
+	 * ---
+	 *
+	 * [--regex]
+	 * : Same as --mode=regex.
+	 *
+	 * [--ignore-case]
+	 * : Case-insensitive.
+	 *
+	 * [--no-www]
+	 * : URL mode: do not process the variant with / without "www.".
+	 *
+	 * [--no-variants]
+	 * : Text mode: do not process the JSON-escaped and URL-encoded forms.
+	 *
+	 * [--guid]
+	 * : Also change the guid of posts.
+	 *
+	 * [--tables=<tables>]
+	 * : Comma separated table names. Default: all the tables of the site.
+	 *
+	 * [--dry-run]
+	 * : Only analyze.
+	 *
+	 * [--yes]
+	 * : Do not ask for confirmation.
+	 *
+	 * ## EXAMPLES
+	 *
+	 *     wp migration replace 'https://www.old.fr' 'https://www.new.fr' --dry-run
+	 *     wp migration replace 'https://www.old.fr' 'https://www.new.fr' --yes
+	 *     wp migration replace 'Ancienne société' 'Nouvelle société' --mode=text --tables=wp_posts,wp_postmeta
+	 *
+	 * @param array $args       Arguments.
+	 * @param array $assoc_args Options.
+	 */
+	public function replace( $args, $assoc_args ) {
+		$mode = isset( $assoc_args['regex'] ) ? 'regex' : ( isset( $assoc_args['mode'] ) ? $assoc_args['mode'] : 'url' );
+		try {
+			$search = WPMIG_Search::start(
+				array(
+					'search'      => $args[0],
+					'replace'     => $args[1],
+					'mode'        => $mode,
+					'ignore_case' => isset( $assoc_args['ignore-case'] ),
+					'www'         => ! isset( $assoc_args['no-www'] ),
+					'variants'    => ! isset( $assoc_args['no-variants'] ),
+					'guid'        => isset( $assoc_args['guid'] ),
+					'tables'      => isset( $assoc_args['tables'] ) ? array_map( 'trim', explode( ',', $assoc_args['tables'] ) ) : array(),
+				)
+			);
+			$state = $search->run();
+			$this->replace_summary( $state );
+			if ( isset( $assoc_args['dry-run'] ) || ! $state['totals']['changed'] ) {
+				$search->dismiss();
+				WP_CLI::success( isset( $assoc_args['dry-run'] ) ? 'Analyse terminée, rien n\'a été modifié.' : 'Rien à remplacer.' );
+				return;
+			}
+			WP_CLI::confirm( 'Remplacer maintenant dans la base de données ?', $assoc_args );
+			$search->confirm();
+			$state = $search->run();
+			$this->replace_summary( $state );
+			WP_CLI::success( 'Remplacement terminé (annulation possible : wp migration replace-undo ' . $state['id'] . '). Videz les caches du site.' );
+		} catch ( WPMIG_Exception $e ) {
+			WP_CLI::error( $e->getMessage() );
+		}
+	}
+
+	/**
+	 * Undo a search and replace (the last one by default).
+	 *
+	 * ## OPTIONS
+	 *
+	 * [<id>]
+	 * : Identifier printed by wp migration replace.
+	 *
+	 * [--yes]
+	 * : Do not ask for confirmation.
+	 *
+	 * @subcommand replace-undo
+	 * @param array $args       Arguments.
+	 * @param array $assoc_args Options.
+	 */
+	public function replace_undo( $args, $assoc_args ) {
+		$id = isset( $args[0] ) ? $args[0] : '';
+		if ( '' === $id ) {
+			foreach ( WPMIG_Search::history() as $h ) {
+				if ( 'done' === $h['status'] ) {
+					$id = $h['id'];
+					break;
+				}
+			}
+		}
+		WP_CLI::confirm( 'Annuler le remplacement ' . $id . ' ?', $assoc_args );
+		try {
+			$state = WPMIG_Search::undo( $id )->run();
+		} catch ( WPMIG_Exception $e ) {
+			WP_CLI::error( $e->getMessage() );
+		}
+		WP_CLI::success( sprintf( '%d valeur(s) restaurée(s), %d laissée(s) telle(s) quelle(s) (modifiées depuis).', $state['undo']['restored'], $state['undo']['kept'] ) );
+	}
+
+	/**
+	 * Print the result of a search and replace.
+	 *
+	 * @param array $state Public state.
+	 */
+	private function replace_summary( array $state ) {
+		$t = $state['totals'];
+		foreach ( $state['tables'] as $table ) {
+			WP_CLI::log( sprintf( '  %-40s %6d ligne(s), %6d occurrence(s) (%s)', $table['name'], $table['rows'], $table['matches'], implode( ', ', $table['cols'] ) ) );
+		}
+		foreach ( $state['warnings'] as $warning ) {
+			WP_CLI::warning( $warning );
+		}
+		foreach ( $state['skipped'] as $skipped ) {
+			WP_CLI::warning( 'Table ignorée : ' . $skipped );
+		}
+		WP_CLI::log( sprintf( '%d occurrence(s) dans %d ligne(s) de %d table(s).', $t['matches'], $t['changed'], $t['tables'] ) );
+	}
+
+	/**
 	 * List the packages.
 	 *
 	 * [--format=<format>]

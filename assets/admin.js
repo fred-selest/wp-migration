@@ -649,4 +649,181 @@
 			syncLoop( JSON.parse( initial ) );
 		}
 	}
+	/* Search and replace in the database. */
+	var search = document.getElementById( 'wpmig-search' );
+	if ( search ) {
+		var searchForm = $( '#wpmig-search-form' );
+		var searchPanel = $( '#wpmig-search-panel' );
+		var searchRetries = 0;
+		var searchRunning = [ 'analyzing', 'applying', 'undoing' ];
+		var searchMode = function () {
+			return searchForm.querySelector( 'input[name="wpmig-search-mode"]:checked' ).value;
+		};
+
+		var searchResults = function ( state ) {
+			var html = '';
+			if ( ! state.tables.length ) {
+				return '<p>Aucune occurrence trouvée.</p>';
+			}
+			html += '<table class="widefat striped wpmig-search-tables"><thead><tr><th>Table</th><th>Colonnes</th><th class="num">Lignes</th><th class="num">Occurrences</th></tr></thead><tbody>';
+			state.tables.forEach( function ( t ) {
+				html += '<tr><td><code>' + esc( t.name ) + '</code></td><td>' + esc( t.cols.join( ', ' ) ) + '</td><td class="num">' + esc( t.rows ) + '</td><td class="num">' + esc( t.matches ) + '</td></tr>';
+			} );
+			html += '</tbody></table>';
+			if ( state.samples.length ) {
+				html += '<details><summary>Exemples (' + state.samples.length + ')</summary><table class="widefat striped wpmig-search-samples"><thead><tr><th>Où</th><th>Avant / après</th></tr></thead><tbody>';
+				state.samples.forEach( function ( x ) {
+					html += '<tr><td><code>' + esc( x.table ) + '</code><br>' + esc( x.row ) + '<br>' + esc( x.column ) + '</td><td>' + esc( x.pre ) + '<del>' + esc( x.before ) + '</del>' + esc( x.post ) + '<br>' + esc( x.pre ) + '<ins>' + esc( x.after ) + '</ins>' + esc( x.post ) + '</td></tr>';
+				} );
+				html += '</tbody></table></details>';
+			}
+			return html;
+		};
+
+		var searchSummary = function ( state, past ) {
+			var t = state.totals;
+			return '<strong>' + esc( t.matches ) + '</strong> occurrence(s) ' + ( past ? 'remplacée(s)' : 'à remplacer' ) + ' dans <strong>' + esc( t.changed ) + '</strong> ligne(s) de ' + esc( t.tables ) + ' table(s).';
+		};
+
+		var renderSearch = function ( state ) {
+			var p = state.params;
+			var modes = { text: 'texte', url: 'URL / chemin', regex: 'expression régulière' };
+			var html = '<div class="wpmig-sync-state">';
+			html += '<p>Recherche (' + esc( modes[ p.mode ] ) + ') : <code>' + esc( p.search ) + '</code> → <code>' + ( p.replace === '' ? '<em>(supprimé)</em>' : esc( p.replace ) ) + '</code></p>';
+			if ( state.status === 'analyzing' || state.status === 'applying' ) {
+				html += '<div class="wpmig-bar"><span style="width:' + Math.max( 3, state.progress ) + '%"></span></div>';
+				html += '<p class="wpmig-msg">' + ( state.status === 'analyzing' ? 'Analyse' : 'Remplacement' ) + ' en cours' + ( state.table ? ' : <code>' + esc( state.table ) + '</code>' : '' ) + ' — ' + searchSummary( state, state.status === 'applying' ) + '</p>';
+			} else if ( state.status === 'undoing' ) {
+				html += '<div class="wpmig-bar"><span style="width:' + Math.max( 3, state.progress ) + '%"></span></div><p class="wpmig-msg">Annulation en cours…</p>';
+			} else if ( state.status === 'analyzed' ) {
+				( state.warnings || [] ).forEach( function ( w ) {
+					html += '<div class="notice notice-warning inline"><p>' + esc( w ) + '</p></div>';
+				} );
+				html += '<h3>Analyse</h3><p>' + ( state.totals.changed ? searchSummary( state, false ) : 'Aucune occurrence trouvée : rien à remplacer.' ) + '</p>' + searchResults( state );
+				if ( state.skipped.length ) {
+					html += '<p class="description">Tables ignorées : ' + esc( state.skipped.join( ', ' ) ) + '.</p>';
+				}
+				html += '<p>' + ( state.totals.changed ? '<button type="button" class="button button-primary" data-search="confirm">Remplacer</button> ' : '' ) + '<button type="button" class="button" data-search="dismiss">' + ( state.totals.changed ? 'Abandonner' : 'Fermer' ) + '</button></p>';
+				if ( state.totals.changed ) {
+					html += '<p class="description">Conseil : faites d\'abord une sauvegarde de ce site (un package). Le remplacement peut aussi être annulé juste après.</p>';
+				}
+			} else if ( state.status === 'done' ) {
+				html += '<div class="notice notice-success inline"><p><strong>Remplacement terminé.</strong> ' + searchSummary( state, true ) + '</p></div>' + searchResults( state );
+				html += '<p class="description">Videz les caches (extension de cache, CSS générés par votre constructeur de pages) pour voir le résultat sur le site.</p>';
+				html += '<p><button type="button" class="button" data-search="dismiss">Terminer</button> <button type="button" class="button-link wpmig-danger" data-search="undo">Annuler ce remplacement</button></p>';
+			} else if ( state.status === 'undone' ) {
+				html += '<div class="notice notice-info inline"><p><strong>Remplacement annulé.</strong> ' + esc( state.undo.restored ) + ' valeur(s) restaurée(s)' + ( state.undo.kept ? ', ' + esc( state.undo.kept ) + ' laissée(s) telle(s) quelle(s) car modifiée(s) depuis' : '' ) + '.</p></div>';
+				html += '<p><button type="button" class="button" data-search="dismiss">Fermer</button></p>';
+			}
+			html += '</div>';
+			searchPanel.innerHTML = html;
+			searchForm.hidden = true;
+		};
+
+		var searchLoop = function ( state ) {
+			searchRetries = 0;
+			renderSearch( state );
+			if ( searchRunning.indexOf( state.status ) === -1 ) {
+				return;
+			}
+			setTimeout( function () {
+				post( 'wpmig_search_step' ).then( searchLoop ).catch( function ( err ) {
+					if ( err.retry && searchRetries++ < 5 ) {
+						setTimeout( function () {
+							searchLoop( state );
+						}, 3000 * searchRetries );
+						return;
+					}
+					searchPanel.insertAdjacentHTML( 'beforeend', '<div class="notice notice-error inline"><p>' + esc( err.message ) + '</p><p><button type="button" class="button" data-search="resume">Reprendre</button></p></div>' );
+				} );
+			}, 200 );
+		};
+
+		var searchModeChanged = function () {
+			var mode = searchMode();
+			searchForm.querySelectorAll( 'label[data-mode]' ).forEach( function ( l ) {
+				l.hidden = l.getAttribute( 'data-mode' ) !== mode;
+			} );
+		};
+		searchForm.querySelectorAll( 'input[name="wpmig-search-mode"]' ).forEach( function ( r ) {
+			r.addEventListener( 'change', searchModeChanged );
+		} );
+		searchModeChanged();
+
+		searchForm.addEventListener( 'click', function ( e ) {
+			var which = e.target.getAttribute( 'data-search-tables' );
+			if ( which ) {
+				searchForm.querySelectorAll( 'input[name="wpmig-search-table"]' ).forEach( function ( c ) {
+					c.checked = which === 'all';
+				} );
+			}
+		} );
+
+		searchForm.addEventListener( 'submit', function ( e ) {
+			e.preventDefault();
+			var all = searchForm.querySelectorAll( 'input[name="wpmig-search-table"]' );
+			var picked = [];
+			all.forEach( function ( c ) {
+				if ( c.checked ) {
+					picked.push( c.value );
+				}
+			} );
+			if ( ! picked.length ) {
+				window.alert( 'Cochez au moins une table.' );
+				return;
+			}
+			var button = $( 'button[type="submit"]', searchForm );
+			button.disabled = true;
+			post( 'wpmig_search_start', {
+				search: $( '#wpmig-search-text' ).value,
+				replace: $( '#wpmig-search-replace' ).value,
+				mode: searchMode(),
+				ignore_case: $( '#wpmig-search-case' ).checked ? 1 : '',
+				www: $( '#wpmig-search-www' ).checked ? 1 : '',
+				variants: $( '#wpmig-search-variants' ).checked ? 1 : '',
+				guid: $( '#wpmig-search-guid' ).checked ? 1 : '',
+				tables: picked.length === all.length ? '' : picked.join( ',' )
+			} ).then( function ( state ) {
+				button.disabled = false;
+				searchLoop( state );
+			} ).catch( function ( err ) {
+				button.disabled = false;
+				searchPanel.innerHTML = '<div class="notice notice-error inline"><p>' + esc( err.message ) + '</p></div>';
+			} );
+		} );
+
+		search.addEventListener( 'click', function ( e ) {
+			var target = e.target;
+			var undoId = target.getAttribute( 'data-search-undo' );
+			var action = undoId ? 'undo' : target.getAttribute( 'data-search' );
+			if ( ! action ) {
+				return;
+			}
+			if ( action === 'undo' && ! window.confirm( 'Annuler ce remplacement ? Les valeurs d\'origine sont remises, sauf celles modifiées depuis.' ) ) {
+				return;
+			}
+			if ( action === 'confirm' && ! window.confirm( 'Remplacer maintenant dans la base de données de ce site ?' ) ) {
+				return;
+			}
+			target.disabled = true;
+			if ( action === 'dismiss' ) {
+				post( 'wpmig_search_dismiss' ).then( function () {
+					window.location.reload();
+				} ).catch( function ( err ) {
+					target.disabled = false;
+					window.alert( err.message );
+				} );
+				return;
+			}
+			post( action === 'resume' ? 'wpmig_search_step' : 'wpmig_search_' + action, undoId ? { id: undoId } : {} ).then( searchLoop ).catch( function ( err ) {
+				target.disabled = false;
+				window.alert( err.message );
+			} );
+		} );
+
+		var searchInitial = search.getAttribute( 'data-state' );
+		if ( searchInitial ) {
+			searchLoop( JSON.parse( searchInitial ) );
+		}
+	}
 }() );

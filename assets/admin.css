@@ -51,6 +51,11 @@
 .wpmig .wpmig-sync-counts tbody th{font-weight:600}
 .wpmig .wpmig-danger{color:#b32d2e}
 .wpmig .wpmig-sync-history{margin-top:16px}
+.wpmig .wpmig-search .form-table th{width:170px}
+.wpmig .wpmig-search-samples td{font-family:Consolas,Monaco,monospace;font-size:12px;word-break:break-all;vertical-align:top}
+.wpmig .wpmig-search-samples ins{background:#d7f0dd;text-decoration:none}
+.wpmig .wpmig-search-samples del{background:#fbd5d5;text-decoration:none}
+.wpmig .wpmig-search-tables .num{text-align:right;white-space:nowrap}
 .wpmig .wpmig-sync-source select{vertical-align:baseline}
 .wpmig h1 .wpmig-logo{width:36px;height:36px;vertical-align:middle;margin:-4px 10px 0 0}
 @media (max-width:782px){.wpmig .wpmig-actions{justify-content:flex-start}}

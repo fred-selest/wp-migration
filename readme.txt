@@ -4,7 +4,7 @@ Tags: migration, duplicate, clone, backup, move
 Requires at least: 4.9
 Tested up to: 7.1
 Requires PHP: 5.6
-Stable tag: 1.5.1
+Stable tag: 1.6.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -35,6 +35,9 @@ Multisite non pris en charge.
 3. Envoyer l'archive et installer.php sur le nouveau serveur puis ouvrir installer.php dans le navigateur.
 
 == Changelog ==
+
+= 1.6.0 =
+* Rechercher et remplacer dans la base de données (URL, texte ou expression régulière) : compatible données sérialisées et JSON, avec analyse préalable et annulation (`wp migration replace`).
 
 = 1.5.1 =
 * Nouveau logo : une bretzel alsacienne dans une flèche de sauvegarde (menu, page de l'extension, écran des mises à jour, installeur).

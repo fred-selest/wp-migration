@@ -30,7 +30,7 @@ class WPMIG_Admin {
 		add_action( 'wp_ajax_wpmig_transfer_link', array( __CLASS__, 'ajax_transfer_link' ) );
 		add_action( 'wp_ajax_wpmig_transfer_revoke', array( __CLASS__, 'ajax_transfer_revoke' ) );
 		add_action( 'wp_ajax_wpmig_import_prepare', array( __CLASS__, 'ajax_import_prepare' ) );
-		foreach ( array( 'sync_probe', 'sync_start', 'sync_step', 'sync_confirm', 'sync_undo', 'sync_dismiss', 'sync_link', 'sync_revoke' ) as $action ) {
+		foreach ( array( 'sync_probe', 'sync_start', 'sync_step', 'sync_confirm', 'sync_undo', 'sync_dismiss', 'sync_link', 'sync_revoke', 'search_start', 'search_step', 'search_confirm', 'search_undo', 'search_dismiss' ) as $action ) {
 			add_action( 'wp_ajax_wpmig_' . $action, array( __CLASS__, 'ajax_' . $action ) );
 		}
 		add_action( 'admin_post_wpmig_download', array( __CLASS__, 'download' ) );
@@ -289,6 +289,100 @@ class WPMIG_Admin {
 	}
 
 	/**
+	 * Current search & replace operation of the request.
+	 *
+	 * @return WPMIG_Search
+	 */
+	private static function request_search() {
+		$search = WPMIG_Search::current();
+		if ( ! $search ) {
+			wp_send_json_error( array( 'message' => 'Aucune opération en cours.' ) );
+		}
+		return $search;
+	}
+
+	/**
+	 * Start a search & replace (analysis).
+	 */
+	public static function ajax_search_start() {
+		self::check_ajax();
+		// phpcs:disable WordPress.Security.NonceVerification -- checked in check_ajax().
+		$params = array(
+			'search'      => isset( $_POST['search'] ) ? (string) wp_unslash( $_POST['search'] ) : '', // phpcs:ignore WordPress.Security.ValidatedSanitizedInput
+			'replace'     => isset( $_POST['replace'] ) ? (string) wp_unslash( $_POST['replace'] ) : '', // phpcs:ignore WordPress.Security.ValidatedSanitizedInput
+			'mode'        => isset( $_POST['mode'] ) ? sanitize_key( $_POST['mode'] ) : 'text',
+			'ignore_case' => ! empty( $_POST['ignore_case'] ),
+			'variants'    => ! empty( $_POST['variants'] ),
+			'www'         => ! empty( $_POST['www'] ),
+			'guid'        => ! empty( $_POST['guid'] ),
+			'tables'      => isset( $_POST['tables'] ) && '' !== $_POST['tables'] ? array_map( 'sanitize_text_field', explode( ',', wp_unslash( $_POST['tables'] ) ) ) : array(), // phpcs:ignore WordPress.Security.ValidatedSanitizedInput
+		);
+		// phpcs:enable
+		try {
+			$search = WPMIG_Search::start( $params );
+			wp_send_json_success( $search->step( WPMIG_Plugin::time_budget() ) );
+		} catch ( Exception $e ) {
+			wp_send_json_error( array( 'message' => $e->getMessage() ) );
+		}
+	}
+
+	/**
+	 * Continue the search & replace.
+	 */
+	public static function ajax_search_step() {
+		self::check_ajax();
+		try {
+			wp_send_json_success( self::request_search()->step( WPMIG_Plugin::time_budget() ) );
+		} catch ( Exception $e ) {
+			wp_send_json_error( array( 'message' => $e->getMessage() ) );
+		}
+	}
+
+	/**
+	 * Apply the replacement after the analysis.
+	 */
+	public static function ajax_search_confirm() {
+		self::check_ajax();
+		try {
+			$search = self::request_search();
+			$search->confirm();
+			wp_send_json_success( $search->step( WPMIG_Plugin::time_budget() ) );
+		} catch ( Exception $e ) {
+			wp_send_json_error( array( 'message' => $e->getMessage() ) );
+		}
+	}
+
+	/**
+	 * Undo a replacement (the current one, or one of the history).
+	 */
+	public static function ajax_search_undo() {
+		self::check_ajax();
+		$id = isset( $_POST['id'] ) ? preg_replace( '/[^a-f0-9]/', '', sanitize_text_field( wp_unslash( $_POST['id'] ) ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification
+		try {
+			$search = WPMIG_Search::undo( $id );
+			wp_send_json_success( $search->step( WPMIG_Plugin::time_budget() ) );
+		} catch ( Exception $e ) {
+			wp_send_json_error( array( 'message' => $e->getMessage() ) );
+		}
+	}
+
+	/**
+	 * Close the search & replace panel.
+	 */
+	public static function ajax_search_dismiss() {
+		self::check_ajax();
+		try {
+			$search = WPMIG_Search::current();
+			if ( $search ) {
+				$search->dismiss();
+			}
+			wp_send_json_success();
+		} catch ( Exception $e ) {
+			wp_send_json_error( array( 'message' => $e->getMessage() ) );
+		}
+	}
+
+	/**
 	 * Source side: create the synchronization link.
 	 */
 	public static function ajax_sync_link() {
@@ -521,6 +615,7 @@ class WPMIG_Admin {
 		self::render_cleanup();
 		self::render_import();
 		self::render_sync();
+		self::render_search();
 		self::render_help();
 		echo '</div>';
 	}
@@ -1035,6 +1130,76 @@ class WPMIG_Admin {
 	}
 
 	/**
+	 * Search & replace in the database.
+	 */
+	private static function render_search() {
+		$current = WPMIG_Search::current();
+		$tables  = WPMIG_DB_Exporter::site_tables();
+		$history = WPMIG_Search::history();
+		?>
+		<div class="wpmig-card wpmig-search" id="wpmig-search" data-state="<?php echo esc_attr( $current ? wp_json_encode( $current->public_state() ) : '' ); ?>">
+			<h2>Rechercher et remplacer dans la base de données</h2>
+			<p>Change une adresse, un domaine, un chemin ou n'importe quel texte dans <strong>tous les contenus du site</strong> (articles, pages, réglages, métadonnées, commandes…), y compris dans les données sérialisées et le JSON, que WordPress ne permet pas de modifier avec un simple « rechercher / remplacer » SQL. Une analyse montre tout ce qui serait modifié avant le moindre changement, et l'opération peut être annulée.</p>
+			<form id="wpmig-search-form" <?php echo $current ? 'hidden' : ''; ?>>
+				<table class="form-table" role="presentation"><tbody>
+					<tr>
+						<th scope="row"><label for="wpmig-search-text">Rechercher</label></th>
+						<td><input type="text" id="wpmig-search-text" class="large-text code" required autocomplete="off" spellcheck="false" placeholder="https://www.ancien-site.fr"></td>
+					</tr>
+					<tr>
+						<th scope="row"><label for="wpmig-search-replace">Remplacer par</label></th>
+						<td><input type="text" id="wpmig-search-replace" class="large-text code" autocomplete="off" spellcheck="false" placeholder="https://www.nouveau-site.fr">
+						<p class="description">Laissez vide pour supprimer le texte trouvé.</p></td>
+					</tr>
+					<tr>
+						<th scope="row">Type de recherche</th>
+						<td>
+							<label><input type="radio" name="wpmig-search-mode" value="url" checked> <strong>URL, domaine ou chemin</strong> — mots entiers : <code>http://a.fr</code> ne touche pas <code>http://a.frite.com</code> ; les variantes <code>https</code>, <code>//</code>, JSON (<code>\/</code>) et encodées sont traitées</label><br>
+							<label><input type="radio" name="wpmig-search-mode" value="text"> <strong>Texte</strong> — toutes les occurrences, où qu'elles soient</label><br>
+							<label><input type="radio" name="wpmig-search-mode" value="regex"> <strong>Expression régulière</strong> — <code>/motif/i</code> ; <code>$1</code>, <code>$2</code>… désignent les groupes capturés (ajoutez <code>u</code> pour les caractères accentués)</label>
+						</td>
+					</tr>
+					<tr>
+						<th scope="row">Options</th>
+						<td>
+							<label><input type="checkbox" id="wpmig-search-case"> Ignorer la casse</label><br>
+							<label data-mode="url"><input type="checkbox" id="wpmig-search-www" checked> Traiter aussi la variante avec / sans <code>www.</code></label>
+							<label data-mode="text" hidden><input type="checkbox" id="wpmig-search-variants" checked> Traiter aussi le texte dans les URL encodées (<code>%2F</code>) et le JSON (<code>\/</code>)</label><br>
+							<label><input type="checkbox" id="wpmig-search-guid"> Modifier aussi les identifiants (<code>guid</code>) des articles <span class="description">— déconseillé : ce ne sont pas des liens, et les flux RSS s'en servent pour reconnaître les articles déjà lus</span></label>
+							<details class="wpmig-tables"><summary>Limiter à certaines tables (<?php echo count( $tables ); ?> tables, toutes par défaut)</summary>
+								<p><button type="button" class="button-link" data-search-tables="all">Tout cocher</button> · <button type="button" class="button-link" data-search-tables="none">Tout décocher</button></p>
+								<div class="wpmig-table-list">
+								<?php foreach ( $tables as $t ) : ?>
+									<label><input type="checkbox" name="wpmig-search-table" value="<?php echo esc_attr( $t['name'] ); ?>" checked> <code><?php echo esc_html( $t['name'] ); ?></code> <span class="description"><?php echo esc_html( number_format_i18n( $t['rows'] ) . ' lignes' ); ?></span></label>
+								<?php endforeach; ?>
+								</div>
+							</details>
+						</td>
+					</tr>
+				</tbody></table>
+				<p><button type="submit" class="button button-primary">Analyser</button> <span class="description">Rien n'est modifié avant votre confirmation. Les noms de réglages et de métadonnées, les mots de passe et les tables d'autres sites ne sont jamais touchés.</span></p>
+			</form>
+			<div id="wpmig-search-panel"></div>
+			<?php if ( $history ) : ?>
+				<details class="wpmig-sync-history"><summary>Remplacements précédents (<?php echo esc_html( count( $history ) ); ?>)</summary>
+					<table class="widefat striped"><thead><tr><th>Date</th><th>Recherche</th><th>Remplacement</th><th>Résultat</th><th></th></tr></thead><tbody>
+					<?php foreach ( $history as $h ) : ?>
+						<tr>
+							<td><?php echo esc_html( wpmig_date( $h['finished'] ) ); ?></td>
+							<td><code><?php echo esc_html( mb_strimwidth( $h['params']['search'], 0, 60, '…' ) ); ?></code></td>
+							<td><code><?php echo esc_html( mb_strimwidth( $h['params']['replace'], 0, 60, '…' ) ); ?></code></td>
+							<td><?php echo esc_html( 'undone' === $h['status'] ? 'Annulé' : sprintf( '%s occurrence(s) dans %s ligne(s)', number_format_i18n( $h['matches'] ), number_format_i18n( $h['changed'] ) ) ); ?></td>
+							<td><?php if ( 'done' === $h['status'] && is_file( WPMIG_Plugin::storage_dir() . 'search-' . $h['id'] . '/undo.php' ) ) : ?><button type="button" class="button-link wpmig-danger" data-search-undo="<?php echo esc_attr( $h['id'] ); ?>">Annuler</button><?php endif; ?></td>
+						</tr>
+					<?php endforeach; ?>
+					</tbody></table>
+				</details>
+			<?php endif; ?>
+		</div>
+		<?php
+	}
+
+	/**
 	 * Import from another site (direct transfer link).
 	 */
 	private static function render_import() {
@@ -1071,6 +1236,7 @@ class WPMIG_Admin {
 			</ol>
 			<p><strong>Transfert direct de serveur à serveur</strong> : au lieu d'envoyer l'archive par FTP, cliquez sur « Transfert direct » et déposez seulement <code>installer.php</code> sur le nouveau serveur ; l'installeur y télécharge l'archive directement depuis ce site, avec le lien secret et temporaire fourni.</p>
 			<p><strong>Travail sur une copie</strong> : si le site d'origine reste en ligne pendant que vous travaillez sur la copie, « Synchroniser le contenu » y rapatrie ensuite les commandes, clients, produits, articles et pages créés entre-temps.</p>
+			<p><strong>Changer une adresse ou un texte partout</strong> : « Rechercher et remplacer » modifie toute la base de données (données sérialisées et JSON comprises) après une analyse, et peut être annulé.</p>
 			<p class="description">Accès SSH ? L'installeur fonctionne aussi en ligne de commande : <code>php installer.php --help</code>. Et le package peut être créé avec WP-CLI : <code>wp migration build</code>.</p>
 		</div>
 		<?php
