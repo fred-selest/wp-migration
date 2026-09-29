@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/logo/logo.svg" width="128" height="128" alt="Logo WP Migration : une bretzel alsacienne dans une flèche de sauvegarde"></p>
+
 # WP Migration
 
 Extension WordPress pour **copier un site complet (fichiers + base de données) vers un nouveau domaine et/ou un nouvel hébergement** :
