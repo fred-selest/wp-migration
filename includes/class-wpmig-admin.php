@@ -47,7 +47,9 @@ class WPMIG_Admin {
 	 * Menu.
 	 */
 	public static function menu() {
-		add_menu_page( 'WP Migration', 'WP Migration', self::CAP, self::SLUG, array( __CLASS__, 'page' ), 'dashicons-migrate', 80 );
+		// Monochrome icon, recolored by WordPress like the dashicons.
+		$icon = (string) @file_get_contents( WPMIG_DIR . 'assets/logo/menu-icon.svg' ); // phpcs:ignore
+		add_menu_page( 'WP Migration', 'WP Migration', self::CAP, self::SLUG, array( __CLASS__, 'page' ), '' !== $icon ? 'data:image/svg+xml;base64,' . base64_encode( $icon ) : 'dashicons-migrate', 80 ); // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions
 	}
 
 	/**
@@ -497,7 +499,7 @@ class WPMIG_Admin {
 			return;
 		}
 		echo '<div class="wrap wpmig">';
-		echo '<h1 class="wp-heading-inline">WP Migration</h1>';
+		echo '<h1 class="wp-heading-inline">' . self::logo() . 'WP Migration</h1>';
 		if ( is_multisite() ) {
 			echo '<div class="notice notice-error"><p>Les installations multisite ne sont pas prises en charge.</p></div></div>';
 			return;
@@ -668,6 +670,15 @@ class WPMIG_Admin {
 	}
 
 	/**
+	 * Logo in the page titles.
+	 *
+	 * @return string HTML.
+	 */
+	private static function logo() {
+		return '<img class="wpmig-logo" src="' . esc_url( WPMIG_URL . 'assets/logo/logo.svg' ) . '" width="36" height="36" alt="">';
+	}
+
+	/**
 	 * Status badge.
 	 *
 	 * @param bool   $ok    Success.
@@ -721,7 +732,7 @@ class WPMIG_Admin {
 	private static function render_report_page() {
 		$report = WPMIG_Report::get();
 		echo '<div class="wrap wpmig wpmig-report">';
-		echo '<h1 class="wp-heading-inline">Rapport de migration</h1> ';
+		echo '<h1 class="wp-heading-inline">' . self::logo() . 'Rapport de migration</h1> ';
 		echo '<a class="page-title-action" href="' . esc_url( admin_url( 'admin.php?page=' . self::SLUG ) ) . '">← WP Migration</a>';
 		echo '<hr class="wp-header-end">';
 		if ( ! $report ) {

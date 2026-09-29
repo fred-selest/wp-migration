@@ -177,7 +177,11 @@ class WPMIG_Updater {
 			'tested'       => self::tested( $release['tested'] ),
 			'requires'     => $release['requires'],
 			'requires_php' => $release['requires_php'],
-			'icons'        => array(),
+			'icons'        => array(
+				'1x'  => WPMIG_URL . 'assets/logo/icon-128x128.png',
+				'2x'  => WPMIG_URL . 'assets/logo/icon-256x256.png',
+				'svg' => WPMIG_URL . 'assets/logo/logo.svg',
+			),
 			'banners'      => array(),
 			'banners_rtl'  => array(),
 			'translations' => array(),
