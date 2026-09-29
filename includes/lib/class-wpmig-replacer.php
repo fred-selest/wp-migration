@@ -10,6 +10,8 @@
  *   on "word" boundaries: http://old.com never matches http://old.company.fr.
  * - JSON-escaped (http:\/\/...) and URL-encoded (http%3A%2F%2F...) variants
  *   are generated automatically by build_url_pairs().
+ * - Options: substring matching (no word boundaries), case-insensitive matching,
+ *   or a regular expression (search & replace tool).
  *
  * No WordPress dependency (shared with the standalone installer).
  *
@@ -56,14 +58,69 @@ if ( ! class_exists( 'WPMIG_Replacer' ) ) {
 		private $depth = 0;
 
 		/**
+		 * Number of replacements made.
+		 *
+		 * @var int
+		 */
+		public $count = 0;
+
+		/**
+		 * Case-insensitive matching.
+		 *
+		 * @var bool
+		 */
+		private $ignore_case = false;
+
+		/**
+		 * Case-insensitive matching of non-ASCII letters (UTF-8 mode).
+		 *
+		 * @var bool
+		 */
+		private $unicode = false;
+
+		/**
+		 * Minimal length of a search string.
+		 *
+		 * @var int
+		 */
+		private $min = 3;
+
+		/**
+		 * Replacement of a regular expression (null: search strings).
+		 *
+		 * @var string|null
+		 */
+		private $template = null;
+
+		/**
 		 * Constructor.
 		 *
-		 * @param array $pairs search => replace.
+		 * Options: "boundary" (bool, default true: not inside a longer host name or
+		 * path segment), "ignore_case" (bool), "min" (int, shortest search string).
+		 *
+		 * @param array $pairs   search => replace.
+		 * @param array $options Options.
 		 */
-		public function __construct( array $pairs ) {
+		public function __construct( array $pairs, array $options = array() ) {
+			$boundary          = ! isset( $options['boundary'] ) || $options['boundary'];
+			$this->ignore_case = ! empty( $options['ignore_case'] );
+			$this->min         = isset( $options['min'] ) ? max( 1, (int) $options['min'] ) : 3;
 			foreach ( $pairs as $search => $replace ) {
 				$search = (string) $search;
-				if ( strlen( $search ) < 3 || $search === (string) $replace ) {
+				if ( strlen( $search ) < $this->min || $search === (string) $replace ) {
+					continue;
+				}
+				if ( $this->ignore_case ) {
+					// Accented letters need the UTF-8 mode of the regular expression.
+					if ( preg_match( '/[^\x00-\x7F]/', $search ) && preg_match( '//u', $search ) && function_exists( 'mb_strtolower' ) ) {
+						$this->unicode = true;
+					}
+					$lower = $this->lower( $search );
+					// One replacement by spelling: the first one wins.
+					if ( isset( $this->map[ $lower ] ) ) {
+						continue;
+					}
+					$this->map[ $lower ] = (string) $replace;
 					continue;
 				}
 				$this->map[ $search ] = (string) $replace;
@@ -77,8 +134,42 @@ if ( ! class_exists( 'WPMIG_Replacer' ) ) {
 			foreach ( $keys as $key ) {
 				$quoted[] = preg_quote( $key, '/' );
 			}
+			$flags = 'S' . ( $this->ignore_case ? 'i' : '' ) . ( $this->unicode ? 'u' : '' );
+			if ( ! $boundary ) {
+				$this->regex = '/(?:' . implode( '|', $quoted ) . ')/' . $flags;
+				return;
+			}
 			// Not preceded / followed by a character that would continue a host name or a path segment.
-			$this->regex = '/(?<![A-Za-z0-9_.\-])(?:' . implode( '|', $quoted ) . ')(?![A-Za-z0-9_\-]|\.[A-Za-z0-9])/S';
+			$this->regex = '/(?<![A-Za-z0-9_.\-])(?:' . implode( '|', $quoted ) . ')(?![A-Za-z0-9_\-]|\.[A-Za-z0-9])/' . $flags;
+		}
+
+		/**
+		 * Lower case, in the mode of the search.
+		 *
+		 * @param string $s String.
+		 * @return string
+		 */
+		private function lower( $s ) {
+			return $this->unicode ? mb_strtolower( $s, 'UTF-8' ) : strtolower( $s );
+		}
+
+		/**
+		 * Replacer for a regular expression.
+		 *
+		 * @param string $pattern     Pattern, with delimiters and modifiers ("/x(\d+)/i").
+		 * @param string $replacement Replacement ($1, \1 and ${1} are the captured groups).
+		 * @return WPMIG_Replacer|null Null when the pattern is not valid.
+		 */
+		public static function from_regex( $pattern, $replacement ) {
+			// A pattern that does not compile (or an empty one) must not silently do nothing.
+			if ( '' === $pattern || false === @preg_match( $pattern, '' ) ) { // phpcs:ignore WordPress.PHP.NoSilencedErrors
+				return null;
+			}
+			$r           = new self( array() );
+			$r->regex    = $pattern;
+			$r->template = (string) $replacement;
+			$r->map      = array( $pattern => $replacement );
+			return $r;
 		}
 
 		/**
@@ -117,8 +208,11 @@ if ( ! class_exists( 'WPMIG_Replacer' ) ) {
 		 * @return bool
 		 */
 		public function contains( $value ) {
+			if ( null !== $this->template || $this->unicode ) {
+				return 1 === @preg_match( $this->regex, $value ); // phpcs:ignore WordPress.PHP.NoSilencedErrors
+			}
 			foreach ( $this->map as $search => $unused ) {
-				if ( false !== strpos( $value, $search ) ) {
+				if ( $this->ignore_case ? false !== stripos( $value, $search ) : false !== strpos( $value, $search ) ) {
 					return true;
 				}
 			}
@@ -132,7 +226,7 @@ if ( ! class_exists( 'WPMIG_Replacer' ) ) {
 		 * @return string
 		 */
 		public function replace( $value ) {
-			if ( ! $this->map || ! is_string( $value ) || strlen( $value ) < 3 || ! $this->contains( $value ) ) {
+			if ( ! $this->map || ! is_string( $value ) || strlen( $value ) < $this->min || ! $this->contains( $value ) ) {
 				return $value;
 			}
 			if ( self::looks_serialized( $value ) ) {
@@ -153,15 +247,58 @@ if ( ! class_exists( 'WPMIG_Replacer' ) ) {
 		 * @return string
 		 */
 		public function replace_plain( $value ) {
-			$map    = $this->map;
-			$result = preg_replace_callback(
+			if ( ! $this->map ) {
+				return $value;
+			}
+			$map      = $this->map;
+			$template = $this->template;
+			$lower    = $this->ignore_case;
+			$count    = 0;
+			$result   = @preg_replace_callback( // phpcs:ignore WordPress.PHP.NoSilencedErrors
 				$this->regex,
-				function ( $m ) use ( $map ) {
-					return $map[ $m[0] ];
+				function ( $m ) use ( $map, $template, $lower, &$count ) {
+					$count++;
+					if ( null !== $template ) {
+						return WPMIG_Replacer::expand( $template, $m );
+					}
+					return $map[ $lower ? $this->lower( $m[0] ) : $m[0] ];
 				},
 				$value
 			);
-			return null === $result ? $value : $result;
+			if ( null === $result ) {
+				return $value;
+			}
+			$this->count += $count;
+			return $result;
+		}
+
+		/**
+		 * Replacement of a regular expression match: $1, \1 and ${1} stand for the
+		 * captured groups, $0 for the whole match ("\\$" and "$$" are literal).
+		 *
+		 * @param string $template Replacement.
+		 * @param array  $m        Match.
+		 * @return string
+		 */
+		public static function expand( $template, array $m ) {
+			return preg_replace_callback(
+				'/\\\\\\\\|\\\\\\$|\\$\\$|\\\\(\\d{1,2})|\\$(\\d{1,2})|\\$\\{(\\d{1,2})\\}/',
+				function ( $t ) use ( $m ) {
+					if ( '\\\\' === $t[0] ) {
+						return '\\';
+					}
+					if ( '\\$' === $t[0] || '$$' === $t[0] ) {
+						return '$';
+					}
+					for ( $i = 3; $i >= 1; $i-- ) {
+						if ( isset( $t[ $i ] ) && '' !== $t[ $i ] ) {
+							return isset( $m[ (int) $t[ $i ] ] ) ? $m[ (int) $t[ $i ] ] : '';
+						}
+					}
+					return $t[0];
+				},
+				$template
+			);
 		}
 
 		/**

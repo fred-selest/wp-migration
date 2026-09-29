@@ -46,6 +46,12 @@ WordPress n'a **pas** besoin d'être installé sur la destination. S'il l'est d�
 
 ![Synchronisation terminée](docs/screenshots/19-synchronisation-terminee.png)
 
+### Rechercher et remplacer dans la base de données
+
+| Formulaire | Analyse avant remplacement |
+|---|---|
+| ![Rechercher et remplacer](docs/screenshots/20-rechercher-remplacer-formulaire.png) | ![Analyse du remplacement](docs/screenshots/21-rechercher-remplacer-analyse.png) |
+
 ### Nettoyage automatique des anciens packages
 
 ![Nettoyage automatique](docs/screenshots/14-nettoyage-automatique.png)
@@ -170,6 +176,36 @@ L'option « Remplacer aussi les produits, pages et médias modifiés sur ce site
 **Identifiants** : chaque contenu garde son identifiant chaque fois que possible — en particulier **les numéros de commande**, connus des clients et des services de paiement. Si la copie utilise déjà le numéro pour une révision, un brouillon automatique ou une commande de test, celle-ci est déplacée ; si c'est un contenu créé sur la copie (une page, un menu…) qui gêne une commande, il est déplacé et ses références connues sont mises à jour (menus, page d'accueil, pages WooCommerce, blocs, images à la une) ; pour les autres contenus, c'est le contenu entrant qui reçoit un nouvel identifiant, et ses liens (image à la une, galerie, variations, client d'une commande…) suivent. Les correspondances sont conservées pour les synchronisations suivantes, et une réserve de 1 000 identifiants au-dessus de ceux du site d'origine éloigne le contenu créé ensuite sur la copie (les numéros de commande peuvent donc sauter d'environ 1 000 après la mise en ligne de la copie).
 
 **Limites** : une suppression définitive sur le site d'origine n'est pas reprise (une mise à la corbeille l'est) ; les réglages, extensions, thèmes, menus et widgets ne sont pas synchronisés (la copie fait référence) ; les données propres à d'autres extensions dans leurs propres tables (abonnements, réservations, fidélité, formulaires…) et les types de contenus personnalisés ne sont pas repris ; avec WPML, les liens entre traductions des contenus sont repris, pas les traductions de catégories créées entre-temps. Après une synchronisation, les statistiques WooCommerce des commandes concernées sont recalculées et les tables de recherche des produits régénérées.
+
+### Rechercher et remplacer dans la base de données
+
+Après une migration (ou à tout moment), pour changer une adresse oubliée, un domaine, un chemin serveur, un nom de société… dans **tout le contenu du site**. Un « rechercher / remplacer » SQL classique casse les données sérialisées (réglages de thème, constructeurs de pages, widgets) parce que la longueur des textes y est mémorisée ; ici chaque valeur est analysée et ses longueurs recalculées, y compris quand la valeur est sérialisée dans une autre valeur sérialisée ou dans du JSON.
+
+**WP Migration → Rechercher et remplacer**, puis :
+
+1. Saisir le texte à **rechercher** et son **remplacement** (vide pour supprimer), et choisir le type de recherche :
+   - **URL, domaine ou chemin** (par défaut) : mots entiers — `http://a.fr` ne touche pas `http://a.frite.com` ; les variantes `https`, `//`, avec / sans `www.`, JSON (`http:\/\/`) et URL encodée (`http%3A%2F%2F`) sont traitées ensemble. Un chemin commence par `/` (`/home/ancien/public_html` → `/var/www/site`).
+   - **Texte** : toutes les occurrences, où qu'elles soient (avec, en option, les formes JSON et URL encodée).
+   - **Expression régulière** : `/motif/i`, avec `$1`, `$2`… pour les groupes capturés (ajouter `u` pour les caractères accentués).
+2. Options : ignorer la casse, ne traiter qu'une partie des tables, modifier aussi les `guid` des articles (déconseillé : ce ne sont pas des liens, les lecteurs RSS s'en servent pour reconnaître les articles déjà lus).
+3. **Analyser** : rien n'est modifié. Le résultat donne, par table, le nombre de lignes et d'occurrences ainsi que des exemples avant / après (la partie modifiée est surlignée).
+4. **Remplacer** après vérification, puis vider les caches (extension de cache, CSS générés par le constructeur de pages).
+
+**Annulation** : la valeur d'origine de chaque colonne modifiée est enregistrée avant le changement ; « Annuler ce remplacement » (ou depuis l'historique des 10 derniers) la remet, sauf si elle a été modifiée depuis (elle est alors laissée telle quelle et comptée). Les journaux des 5 derniers remplacements sont conservés dans le dossier de stockage.
+
+Ne sont **jamais** modifiés : les noms des réglages et des métadonnées (`option_name`, `meta_key`), les mots de passe et clés d'activation des comptes, les réglages de WP Migration et, sauf option, les `guid` des articles. Les colonnes binaires et les tables sans clé primaire sont ignorées (et signalées). Remplacer l'adresse du site elle-même (`siteurl` / `home`) est possible mais déconnecte l'utilisateur : l'analyse le signale, et les réglages sont traités en dernier pour que la session tienne le plus longtemps possible.
+
+En SSH :
+
+```
+wp migration replace 'https://www.ancien.fr' 'https://www.nouveau.fr' --dry-run
+wp migration replace 'https://www.ancien.fr' 'https://www.nouveau.fr' --yes
+wp migration replace 'Ancienne société' 'Nouvelle société' --mode=text --ignore-case --tables=wp_posts,wp_postmeta
+wp migration replace '/produit-(\d+)/' 'article-$1' --regex
+wp migration replace-undo            # dernier remplacement (ou son identifiant)
+```
+
+Contrairement à `wp search-replace`, l'analyse détaillée, l'annulation et le traitement des variantes d'URL sont intégrés.
 
 ### Nettoyage automatique des anciens packages
 

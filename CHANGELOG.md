@@ -3,6 +3,15 @@
 Toutes les évolutions notables de WP Migration sont consignées ici.
 Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le projet respecte le [versionnage sémantique](https://semver.org/lang/fr/).
 
+## [1.6.0] - 2026-09-29
+
+### Ajouté
+- **Rechercher et remplacer dans la base de données** (administration et `wp migration replace`) : change une adresse, un domaine, un chemin ou n'importe quel texte dans toutes les colonnes texte du site (articles, réglages, métadonnées, commandes, tables des extensions…), y compris dans les données sérialisées (longueurs recalculées, jamais de `unserialize()`), les données doublement sérialisées et le JSON.
+  - Trois types de recherche : **URL, domaine ou chemin** (mots entiers : `http://a.fr` ne touche pas `http://a.frite.com` ; variantes `https`, `//`, avec ou sans `www.`, JSON `\/` et URL encodée), **texte** (toutes les occurrences) et **expression régulière** (`/motif/i`, groupes `$1`…). Casse ignorable, accents compris.
+  - Une **analyse** précède toute modification : occurrences, lignes et colonnes concernées par table, exemples avant / après. Un avertissement signale un remplacement qui changerait l'adresse du site (déconnexion). Option `--dry-run` en ligne de commande.
+  - **Annulation** : la valeur d'origine de chaque colonne modifiée est journalisée avant le changement ; une valeur modifiée depuis est laissée telle quelle (`wp migration replace-undo`, historique des 10 derniers remplacements).
+  - Garde-fous : jamais les noms de réglages ni de métadonnées, les mots de passe, les `guid` des articles (sauf option), ni les réglages de WP Migration ; les tables sans clé primaire sont ignorées et signalées. Traitement par lots reprenables (aucun souci de `max_execution_time`), sur une table choisie ou sur toutes.
+
 ## [1.5.1] - 2026-09-29
 
 ### Ajouté
@@ -84,6 +93,7 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le pr
 - Protection de l'installeur par mot de passe.
 - Compatibilité WordPress 4.9 à 7.1 et PHP 5.6 à 8.4.
 
+[1.6.0]: https://github.com/fred-selest/wp-migration/releases/tag/v1.6.0
 [1.5.1]: https://github.com/fred-selest/wp-migration/releases/tag/v1.5.1
 [1.5.0]: https://github.com/fred-selest/wp-migration/releases/tag/v1.5.0
 [1.4.0]: https://github.com/fred-selest/wp-migration/releases/tag/v1.4.0

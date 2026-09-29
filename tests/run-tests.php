@@ -110,6 +110,30 @@ check( 'pas de variante pour localhost / IP', array( null, null ), array( WPMIG_
 $r4 = new WPMIG_Replacer( WPMIG_Replacer::build_url_pairs( 'https://www.site.fr', 'https://neuf.fr' ) + WPMIG_Replacer::build_url_pairs( WPMIG_Replacer::www_variant( 'https://www.site.fr' ), 'https://neuf.fr' ) );
 check( 'remplacement des deux variantes', 'https://neuf.fr/a https://neuf.fr/b', $r4->replace( 'https://www.site.fr/a http://site.fr/b' ) );
 
+echo "\nRechercher / remplacer\n";
+$t = new WPMIG_Replacer( array( 'foo' => 'barbaz' ), array( 'boundary' => false, 'min' => 1 ) );
+check( 'texte : sans limite de mot', 'xbarbazy barbaz', $t->replace( 'xfooy foo' ) );
+check( 'texte : nombre de remplacements', 2, $t->count );
+$ser = serialize( array( 'a' => 'un foo', 'foo' => 'clé', 'b' => array( 'c' => 'foofoo' ) ) );
+$un  = unserialize( $t->replace( $ser ) );
+check( 'texte : sérialisé recalculé, clés intactes', array( 'a' => 'un barbaz', 'foo' => 'clé', 'b' => array( 'c' => 'barbazbarbaz' ) ), $un );
+$t = new WPMIG_Replacer( array( 'a' => 'b' ), array( 'boundary' => false, 'min' => 1 ) );
+check( 'texte : un caractère', 'bbb', $t->replace( 'aab' ) );
+$t = new WPMIG_Replacer( array( 'Société' => 'Entreprise' ), array( 'boundary' => false, 'min' => 1, 'ignore_case' => true ) );
+check( 'casse ignorée, lettres accentuées comprises', 'Entreprise et Entreprise, ENTREPRISE ok', $t->replace( 'société et SOCIÉTÉ, ENTREPRISE ok' ) );
+$t = new WPMIG_Replacer( array( 'abc' => 'Z' ), array( 'boundary' => false, 'min' => 1, 'ignore_case' => true ) );
+check( 'casse ignorée (ASCII)', 'xZZZ', $t->replace( 'xabcABCAbc' ) );
+$t = new WPMIG_Replacer( array( 'abc' => 'Z' ), array( 'boundary' => false, 'min' => 1 ) );
+check( 'casse respectée par défaut', 'ABC Z', $t->replace( 'ABC abc' ) );
+$t = WPMIG_Replacer::from_regex( '/(\d+)-(\w+)/', '$2:$1 \1 ${2} $$ \$' );
+check( 'regex : groupes capturés', 'ab:12 12 ab $ $ et x:7 7 x $ $', $t->replace( '12-ab et 7-x' ) );
+check( 'regex : nombre de remplacements', 2, $t->count );
+check( 'regex : dans un sérialisé', array( 'k' => 'v:1 1 v $ $' ), unserialize( $t->replace( serialize( array( 'k' => '1-v' ) ) ) ) );
+check( 'regex invalide refusée', null, WPMIG_Replacer::from_regex( '/(/', 'x' ) );
+check( 'regex vide refusée', null, WPMIG_Replacer::from_regex( '', 'x' ) );
+$t = new WPMIG_Replacer( WPMIG_Replacer::build_url_pairs( 'http://old.com', 'https://new.fr' ), array( 'ignore_case' => true ) );
+check( 'URL : casse ignorée, mots entiers', 'https://new.fr/a HTTP://OLD.COMPANY.FR', $t->replace( 'HTTP://OLD.COM/a HTTP://OLD.COMPANY.FR' ) );
+
 echo "\nSQL\n";
 $samples = array( '', 'simple', "l'apostrophe", 'back\\slash', "nul\0byte", "ligne\nnouvelle\r\n", "ctrl\x1a", '"guillemets"', "émoji 😀", "\\'", "''" );
 foreach ( $samples as $i => $s ) {
