@@ -3,6 +3,11 @@
 Toutes les évolutions notables de WP Migration sont consignées ici.
 Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le projet respecte le [versionnage sémantique](https://semver.org/lang/fr/).
 
+## [1.6.1] - 2026-09-29
+
+### Ajouté
+- Bouton **« Sauvegarder la base de données »** dans l'analyse de « Rechercher et remplacer » et dans celle de « Synchroniser le contenu », à côté du bouton d'application : un clic crée un package de la base de données seule (sans rien exclure : transitoires, indésirables et révisions compris), à télécharger avec son installeur et son mot de passe (affiché une seule fois). Il figure aussi dans la liste des packages et se restaure avec l'installeur.
+
 ## [1.6.0] - 2026-09-29
 
 ### Ajouté
@@ -93,6 +98,7 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le pr
 - Protection de l'installeur par mot de passe.
 - Compatibilité WordPress 4.9 à 7.1 et PHP 5.6 à 8.4.
 
+[1.6.1]: https://github.com/fred-selest/wp-migration/releases/tag/v1.6.1
 [1.6.0]: https://github.com/fred-selest/wp-migration/releases/tag/v1.6.0
 [1.5.1]: https://github.com/fred-selest/wp-migration/releases/tag/v1.5.1
 [1.5.0]: https://github.com/fred-selest/wp-migration/releases/tag/v1.5.0
