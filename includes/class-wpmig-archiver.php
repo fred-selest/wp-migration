@@ -57,6 +57,7 @@ class WPMIG_Archiver {
 			'package'     => $data['id'],
 			'name'        => $data['name'],
 			'created'     => gmdate( 'Y-m-d H:i:s' ),
+			'dump_started' => isset( $data['dump']['started'] ) ? $data['dump']['started'] : '',
 			'db_only'     => ! empty( $data['options']['db_only'] ),
 			'site'        => array(
 				'home'                => untrailingslashit( get_option( 'home' ) ),

@@ -21,6 +21,7 @@ class WPMIG_Plugin {
 		WPMIG_Transfer::init();
 		WPMIG_Cleanup::init();
 		WPMIG_Updater::init();
+		WPMIG_Sync_Source::init();
 		if ( is_admin() && class_exists( 'WPMIG_Admin' ) ) {
 			WPMIG_Admin::init();
 		}

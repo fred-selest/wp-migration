@@ -44,4 +44,12 @@
 .wpmig .wpmig-report-tables tr.wpmig-t-empty td{color:#646970}
 .wpmig .wpmig-report-list{list-style:disc;padding-left:20px;max-height:300px;overflow:auto}
 .wpmig .wpmig-log{max-height:480px;overflow:auto;font-size:12px;line-height:1.5}
+.wpmig .wpmig-sync-kinds{margin:8px 0}
+.wpmig .wpmig-sync-kinds label{display:inline-block;margin:4px 18px 4px 0}
+.wpmig .wpmig-sync-counts{margin:8px 0}
+.wpmig .wpmig-sync-counts .num{text-align:center;white-space:nowrap}
+.wpmig .wpmig-sync-counts tbody th{font-weight:600}
+.wpmig .wpmig-danger{color:#b32d2e}
+.wpmig .wpmig-sync-history{margin-top:16px}
+.wpmig .wpmig-sync-source select{vertical-align:baseline}
 @media (max-width:782px){.wpmig .wpmig-actions{justify-content:flex-start}}

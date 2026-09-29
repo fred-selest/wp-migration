@@ -3,6 +3,20 @@
 Toutes les évolutions notables de WP Migration sont consignées ici.
 Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le projet respecte le [versionnage sémantique](https://semver.org/lang/fr/).
 
+## [1.5.0] - 2026-09-29
+
+### Ajouté
+- **Synchronisation du contenu** : pendant qu'on travaille sur une copie du site (préproduction, développement), récupérer ce qui a été créé ou modifié sur le site d'origine depuis la copie — commandes (avec articles, notes, remboursements, droits de téléchargement), clients, produits et variations (avec leur stock), codes promo, articles et pages, médias (fichiers compris), commentaires et avis. Le site d'origine est seulement lu.
+  - Sur le site d'origine : « Autoriser la synchronisation » crée un lien secret, temporaire et révocable (`wp migration sync-link`).
+  - Sur la copie : « Synchroniser le contenu » analyse d'abord (ajouts, mises à jour, contenus conservés, points à connaître), puis importe après confirmation (`wp migration sync`, `--dry-run`).
+  - Les numéros de commande sont conservés : une révision, un brouillon automatique ou une commande de test de la copie qui utilise le même identifiant est déplacé (ses références connues sont mises à jour).
+  - Les produits, pages et médias modifiés sur la copie gardent leur version (les produits reçoivent le stock et les ventes du site d'origine), sauf option contraire ; commandes, clients, codes promo et avis viennent du site d'origine.
+  - Synchronisations successives : seules les nouveautés sont reprises ; les correspondances d'identifiants sont conservées ; une réserve d'identifiants évite que le contenu créé ensuite sur la copie ne croise celui du site d'origine.
+  - Annulation de la dernière synchronisation (`wp migration sync-undo`) : chaque modification est journalisée.
+  - WPML : langue et liens entre traductions des contenus synchronisés. WooCommerce : stockage HPOS ou articles, statistiques recalculées.
+  - Date de la copie trouvée automatiquement (rapport de migration, dernière synchronisation, ou package du site d'origine à choisir).
+- Le package enregistre l'heure exacte du début de l'export de la base de données.
+
 ## [1.4.0] - 2026-09-29
 
 ### Ajouté
@@ -65,6 +79,7 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le pr
 - Protection de l'installeur par mot de passe.
 - Compatibilité WordPress 4.9 à 7.1 et PHP 5.6 à 8.4.
 
+[1.5.0]: https://github.com/fred-selest/wp-migration/releases/tag/v1.5.0
 [1.4.0]: https://github.com/fred-selest/wp-migration/releases/tag/v1.4.0
 [1.3.0]: https://github.com/fred-selest/wp-migration/releases/tag/v1.3.0
 [1.2.0]: https://github.com/fred-selest/wp-migration/releases/tag/v1.2.0

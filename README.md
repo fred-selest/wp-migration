@@ -6,6 +6,8 @@ Extension WordPress pour **copier un site complet (fichiers + base de données) 
 2. on dépose ces deux fichiers sur le nouveau serveur (dossier vide ou WordPress existant) ;
 3. on ouvre `https://nouveau-domaine.fr/installer.php` : l'installeur extrait les fichiers, importe la base, remplace les URL et les chemins partout (y compris dans les données sérialisées), réécrit `wp-config.php` et `.htaccess`.
 
+Et si le site d'origine reste en ligne pendant que vous travaillez sur la copie, la [synchronisation du contenu](#synchroniser-le-contenu-travail-sur-une-copie) y rapatrie ensuite les commandes, clients, produits, articles et pages créés entre-temps.
+
 WordPress n'a **pas** besoin d'être installé sur la destination. S'il l'est déjà (installation « en un clic » de l'hébergeur), l'extension peut aussi **importer le site d'origine directement, sans FTP** : voir [Transfert direct](#transfert-direct-sans-ftp).
 
 ![Installeur : base de données et nouvelle adresse](docs/screenshots/7-installeur-base-de-donnees.png)
@@ -33,6 +35,14 @@ WordPress n'a **pas** besoin d'être installé sur la destination. S'il l'est d�
 | ![Mot de passe de l'installeur](docs/screenshots/5-installeur-mot-de-passe.png) | ![Vérifications](docs/screenshots/6-installeur-verifications.png) |
 | **Installation en cours** | **Installation terminée** |
 | ![Progression](docs/screenshots/8-installeur-progression.png) | ![Terminé](docs/screenshots/9-installeur-termine.png) |
+
+### Synchronisation du contenu (copie de travail)
+
+| Site d'origine : autoriser | Copie de travail : analyse |
+|---|---|
+| ![Lien de synchronisation](docs/screenshots/17-synchronisation-lien.png) | ![Analyse de la synchronisation](docs/screenshots/18-synchronisation-analyse.png) |
+
+![Synchronisation terminée](docs/screenshots/19-synchronisation-terminee.png)
 
 ### Nettoyage automatique des anciens packages
 
@@ -132,6 +142,33 @@ Le téléchargement se fait par morceaux de 8 Mo (requêtes HTTP `Range`) : il r
 
 Le rapport se télécharge en texte (bouton « Télécharger le rapport ») ; en ligne de commande : `wp migration report` (`--format=json` ; code de sortie 1 si une anomalie a été détectée, pratique dans un script). L'installeur en ligne de commande affiche aussi le résumé des contrôles à la fin.
 
+### Synchroniser le contenu (travail sur une copie)
+
+Scénario type : le site est copié sur un serveur de développement ou de préproduction, on y travaille plusieurs jours (thème, extensions, pages…), pendant que **le site d'origine reste en ligne** et reçoit des commandes, des clients, des avis, de nouveaux produits. Avant la mise en ligne de la copie, la synchronisation y rapatrie tout ce qui a été créé ou modifié sur le site d'origine depuis la copie.
+
+1. **Sur le site d'origine** (WP Migration 1.5.0 ou plus récent) : **WP Migration → Autoriser la synchronisation → Créer un lien** (valable 24 h, 3 ou 7 jours, révocable). Ce site est seulement lu.
+2. **Sur la copie** : **WP Migration → Synchroniser le contenu**, coller le lien, choisir les contenus, puis **Analyser**. La date de la copie est trouvée automatiquement (rapport de migration, synchronisation précédente) ou choisie parmi les packages du site d'origine.
+3. Vérifier l'analyse (ajouts, mises à jour, contenus conservés, points à connaître), puis **Importer ces contenus**. Rien n'est modifié avant cette confirmation, et la dernière synchronisation peut être **annulée**.
+4. Recommencer autant que nécessaire : seules les nouveautés sont reprises. Faire une dernière synchronisation juste avant la mise en ligne, idéalement avec la boutique d'origine en maintenance pour ne perdre aucune commande entre les deux.
+
+En SSH : `wp migration sync-link` sur le site d'origine, puis `wp migration sync '<lien>' --dry-run`, `wp migration sync '<lien>' --yes`, `wp migration sync-undo` sur la copie (options `--types=orders,customers,products,coupons,posts,media,comments`, `--since="AAAA-MM-JJ HH:MM"`, `--force`).
+
+| Contenu | Repris | En cas de modification des deux côtés |
+|---|---|---|
+| Commandes et remboursements | articles, notes, adresses, métadonnées (paiement, expédition…), droits de téléchargement ; stockage HPOS ou articles | la version du site d'origine l'emporte |
+| Clients | compte (mot de passe compris), adresses et données WooCommerce | la version du site d'origine l'emporte ; les administrateurs de la copie ne sont jamais modifiés |
+| Produits et variations | fiche, prix, images, catégories, attributs, **stock et ventes** (y compris quand seul le stock a changé à cause des commandes) | la version de la copie est conservée, **mais le stock et les ventes viennent du site d'origine** |
+| Codes promo | réglages et utilisations | la version du site d'origine l'emporte |
+| Articles et pages | contenu, image à la une, catégories, étiquettes | la version de la copie est conservée |
+| Médias | fiche et fichiers (toutes les tailles), téléchargés s'ils manquent | la version de la copie est conservée |
+| Commentaires et avis | avec leurs notes | la version du site d'origine l'emporte |
+
+L'option « Remplacer aussi les produits, pages et médias modifiés sur ce site » donne la priorité au site d'origine pour tout.
+
+**Identifiants** : chaque contenu garde son identifiant chaque fois que possible — en particulier **les numéros de commande**, connus des clients et des services de paiement. Si la copie utilise déjà le numéro pour une révision, un brouillon automatique ou une commande de test, celle-ci est déplacée ; si c'est un contenu créé sur la copie (une page, un menu…) qui gêne une commande, il est déplacé et ses références connues sont mises à jour (menus, page d'accueil, pages WooCommerce, blocs, images à la une) ; pour les autres contenus, c'est le contenu entrant qui reçoit un nouvel identifiant, et ses liens (image à la une, galerie, variations, client d'une commande…) suivent. Les correspondances sont conservées pour les synchronisations suivantes, et une réserve de 1 000 identifiants au-dessus de ceux du site d'origine éloigne le contenu créé ensuite sur la copie (les numéros de commande peuvent donc sauter d'environ 1 000 après la mise en ligne de la copie).
+
+**Limites** : une suppression définitive sur le site d'origine n'est pas reprise (une mise à la corbeille l'est) ; les réglages, extensions, thèmes, menus et widgets ne sont pas synchronisés (la copie fait référence) ; les données propres à d'autres extensions dans leurs propres tables (abonnements, réservations, fidélité, formulaires…) et les types de contenus personnalisés ne sont pas repris ; avec WPML, les liens entre traductions des contenus sont repris, pas les traductions de catégories créées entre-temps. Après une synchronisation, les statistiques WooCommerce des commandes concernées sont recalculées et les tables de recherche des produits régénérées.
+
 ### Nettoyage automatique des anciens packages
 
 Les packages occupent de l'espace sur l'hébergement et contiennent une copie complète du site (base de données comprise). L'extension les nettoie automatiquement **après chaque construction et une fois par jour** (WP-Cron) :
@@ -176,6 +213,7 @@ L'encart affiche l'espace utilisé, le prochain et le dernier nettoyage, et prop
 - Installeur protégé par un mot de passe généré automatiquement (seul un hachage salé est stocké), session liée à un jeton ; une installation lancée ne peut pas être reprise depuis un autre navigateur sans le mot de passe. Sans mot de passe, n'importe qui trouvant `installer.php` pourrait lancer l'installation avec sa propre base de données : c'est possible mais déconseillé, et signalé par l'installeur.
 - Lien de transfert direct : jeton aléatoire de 128 bits (seul son hachage est conservé), valable 24 h, révocable, un seul lien actif par package, chaque téléchargement est journalisé (adresse IP) ; la même erreur 403 est renvoyée pour un package inconnu ou une clé fausse. L'import depuis l'administration exige le droit d'installer des extensions et respecte `DISALLOW_FILE_MODS`.
 - La sauvegarde du `wp-config.php` remplacé est un fichier `.php` qui s'arrête immédiatement : elle n'est jamais lisible depuis le web.
+- Lien de synchronisation : jeton aléatoire de 128 bits (seul son hachage est conservé), valable 24 h à 7 jours, révocable, dernière utilisation affichée ; il donne accès en lecture aux contenus et comptes clients du site d'origine : utilisez HTTPS et révoquez-le après usage. Les jetons de session des clients ne sont jamais transmis, et seuls les fichiers de la médiathèque (hors PHP) peuvent être téléchargés.
 - L'installeur propose de se supprimer avec l'archive à la fin ; l'administration du nouveau site affiche un avertissement tant que des fichiers d'installation subsistent.
 
 ## Dépannage

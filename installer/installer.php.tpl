@@ -13,7 +13,7 @@
  * @package WPMigration
  */
 
-define( 'WPMIG_INSTALLER', '1.4.0' );
+define( 'WPMIG_INSTALLER', '1.5.0' );
 
 @ini_set( 'display_errors', '0' ); // phpcs:ignore
 error_reporting( E_ALL & ~E_DEPRECATED & ~E_NOTICE & ~E_WARNING );
@@ -2081,6 +2081,7 @@ class WPMIG_Installer {
 				'id'           => $m['package'],
 				'name'         => $m['name'],
 				'created'      => $m['created'],
+				'dump_started' => isset( $m['dump_started'] ) ? $m['dump_started'] : '',
 				'archive_size' => $archive ? (float) sprintf( '%u', filesize( $archive ) ) : null,
 			),
 			'mode'         => $this->cli ? 'cli' : 'web',

@@ -442,4 +442,211 @@
 			}
 		} );
 	}
+
+	/* Content synchronization, source side: link. */
+	var syncSource = document.getElementById( 'wpmig-sync-source' );
+	if ( syncSource ) {
+		syncSource.addEventListener( 'click', function ( e ) {
+			var target = e.target;
+			if ( target.hasAttribute( 'data-sync-link' ) ) {
+				target.disabled = true;
+				post( 'wpmig_sync_link', { hours: $( '#wpmig-sync-hours' ).value } ).then( function ( link ) {
+					target.disabled = false;
+					var html = '<div class="wpmig-transfer"><h3>Lien de synchronisation</h3>';
+					html += '<p>Valable jusqu\'au ' + esc( link.expires_h ) + '. Collez-le sur la copie de travail : <strong>WP Migration → Synchroniser le contenu</strong>. Il ne sera plus affiché : copiez-le maintenant (un nouveau lien remplace le précédent).</p>';
+					html += '<div class="wpmig-copy"><input type="text" class="large-text code" readonly value="' + esc( link.url ) + '"><button type="button" class="button" data-copy="1">Copier</button></div>';
+					if ( link.insecure ) {
+						html += '<p class="wpmig-warning-text">Ce site n\'est pas en HTTPS : les données transiteront en clair.</p>';
+					}
+					html += '<details><summary>En SSH (WP-CLI)</summary><pre class="wpmig-pre">wp migration sync \'' + esc( link.url ) + '\' --dry-run</pre></details></div>';
+					$( '#wpmig-sync-link-panel' ).innerHTML = html;
+					$( '.wpmig-sync-link-status', syncSource ).innerHTML = '<p><span class="wpmig-transfer-active">● Lien actif jusqu\'au ' + esc( link.expires_h ) + '</span></p>';
+				} ).catch( function ( err ) {
+					target.disabled = false;
+					window.alert( err.message );
+				} );
+			}
+			if ( target.hasAttribute( 'data-sync-revoke' ) ) {
+				post( 'wpmig_sync_revoke' ).then( function () {
+					$( '.wpmig-sync-link-status', syncSource ).innerHTML = '<p>Lien révoqué : il ne permet plus aucune lecture.</p>';
+					$( '#wpmig-sync-link-panel' ).innerHTML = '';
+					target.parentNode.removeChild( target );
+				} );
+			}
+		} );
+	}
+
+	/* Content synchronization, destination side. */
+	var sync = document.getElementById( 'wpmig-sync' );
+	if ( sync ) {
+		var syncForm = $( '#wpmig-sync-form' );
+		var syncPanel = $( '#wpmig-sync-panel' );
+		var syncLabels = JSON.parse( sync.getAttribute( 'data-labels' ) );
+		var syncRetries = 0;
+		var running = [ 'analyzing', 'importing', 'files', 'finalizing', 'undoing' ];
+
+		var countsTable = function ( state ) {
+			var order = [ 'insert', 'update', 'stock', 'keep', 'same', 'skip' ];
+			var rows = '';
+			Object.keys( state.counts || {} ).forEach( function ( kind ) {
+				var c = state.counts[ kind ];
+				rows += '<tr><th>' + esc( syncLabels.kinds[ kind ] || kind ) + '</th>';
+				order.forEach( function ( a ) {
+					rows += '<td class="num">' + ( c[ a ] ? esc( c[ a ] ) : '<span class="description">–</span>' ) + '</td>';
+				} );
+				rows += '</tr>';
+			} );
+			if ( ! rows ) {
+				return '<p>Aucun contenu créé ou modifié sur le site d\'origine depuis cette date.</p>';
+			}
+			var labels = state.status === 'done' ? syncLabels.done : syncLabels.actions;
+			var head = '<tr><th></th>' + order.map( function ( a ) {
+				return '<th class="num">' + esc( labels[ a ] ) + '</th>';
+			} ).join( '' ) + '</tr>';
+			return '<table class="widefat striped wpmig-sync-counts"><thead>' + head + '</thead><tbody>' + rows + '</tbody></table>';
+		};
+
+		var notesList = function ( state ) {
+			var html = '';
+			if ( state.notes && state.notes.length ) {
+				html += '<details open><summary>Points à connaître (' + state.notes.length + ')</summary><ul class="wpmig-report-list">';
+				state.notes.forEach( function ( n ) {
+					html += '<li>' + esc( n[ 2 ] ) + '</li>';
+				} );
+				html += '</ul></details>';
+			}
+			if ( state.warnings && state.warnings.length ) {
+				html += '<ul class="wpmig-warnings">';
+				state.warnings.forEach( function ( w ) {
+					html += '<li>' + esc( w ) + '</li>';
+				} );
+				html += '</ul>';
+			}
+			return html;
+		};
+
+		var renderSync = function ( state ) {
+			var html = '<div class="wpmig-sync-state">';
+			html += '<p>Site d\'origine : <code>' + esc( state.source ) + '</code> — contenus créés ou modifiés depuis le <strong>' + esc( state.threshold_h ) + '</strong>' + ( state.force ? ' (contenus modifiés ici remplacés)' : '' ) + '</p>';
+			if ( state.status === 'error' ) {
+				html += '<div class="notice notice-error inline"><p>' + esc( state.error ) + '</p></div>';
+				html += '<p><button type="button" class="button" data-sync="dismiss">Fermer</button></p>';
+			} else if ( running.indexOf( state.status ) !== -1 ) {
+				html += '<div class="wpmig-bar"><span style="width:' + ( state.status === 'analyzing' ? 5 : Math.max( 5, state.progress ) ) + '%"></span></div>';
+				html += '<p class="wpmig-msg">' + esc( state.message ) + '</p>';
+			} else if ( state.status === 'ready' ) {
+				html += '<h3>Analyse</h3>' + countsTable( state ) + notesList( state );
+				html += '<p>' + ( state.lines ? '<button type="button" class="button button-primary" data-sync="confirm">Importer ces contenus</button> ' : '' ) + '<button type="button" class="button" data-sync="dismiss">' + ( state.lines ? 'Abandonner' : 'Fermer' ) + '</button></p>';
+				if ( state.lines ) {
+					html += '<p class="description">Conseil : faites d\'abord une sauvegarde de ce site (un package). La synchronisation peut aussi être annulée juste après.</p>';
+				}
+			} else if ( state.status === 'done' ) {
+				html += '<div class="notice notice-success inline"><p><strong>Synchronisation terminée.</strong> ' + ( state.files && state.files.total ? esc( state.files.downloaded + ' fichier(s) de médias téléchargé(s).' ) : '' ) + '</p></div>';
+				html += countsTable( state ) + notesList( state );
+				html += '<p><button type="button" class="button" data-sync="dismiss">Terminer</button> <button type="button" class="button-link wpmig-danger" data-sync="undo">Annuler cette synchronisation</button></p>';
+			} else if ( state.status === 'undone' ) {
+				html += '<div class="notice notice-info inline"><p>' + esc( state.message ) + '</p></div>';
+				html += '<p><button type="button" class="button" data-sync="dismiss">Fermer</button></p>';
+			}
+			html += '</div>';
+			syncPanel.innerHTML = html;
+			syncForm.hidden = true;
+		};
+
+		var syncLoop = function ( state ) {
+			syncRetries = 0;
+			renderSync( state );
+			if ( running.indexOf( state.status ) === -1 ) {
+				return;
+			}
+			setTimeout( function () {
+				post( 'wpmig_sync_step' ).then( syncLoop ).catch( function ( err ) {
+					if ( err.retry && syncRetries++ < 5 ) {
+						setTimeout( function () {
+							syncLoop( state );
+						}, 3000 * syncRetries );
+						return;
+					}
+					syncPanel.insertAdjacentHTML( 'beforeend', '<div class="notice notice-error inline"><p>' + esc( err.message ) + ' Rechargez la page pour reprendre.</p></div>' );
+				} );
+			}, 300 );
+		};
+
+		/* Once the link is pasted: date of the copy and packages of the source. */
+		$( '#wpmig-sync-link' ).addEventListener( 'change', function () {
+			var help = $( '#wpmig-sync-since-help' );
+			var select = $( '#wpmig-sync-packages' );
+			post( 'wpmig_sync_probe', { link: this.value } ).then( function ( info ) {
+				select.innerHTML = '<option value="">Package utilisé pour la copie…</option>';
+				info.packages.forEach( function ( p ) {
+					select.insertAdjacentHTML( 'beforeend', '<option value="' + esc( p.value ) + '">' + esc( p.label ) + '</option>' );
+				} );
+				select.hidden = ! info.packages.length;
+				if ( info.default ) {
+					$( '#wpmig-sync-since' ).value = info.default;
+					help.textContent = 'Date trouvée automatiquement (' + info.default_h + ').';
+				} else {
+					help.textContent = 'Indiquez quand ce site a été copié depuis ' + info.source + ', ou choisissez le package utilisé.';
+				}
+			} ).catch( function ( err ) {
+				help.textContent = err.message;
+			} );
+		} );
+		$( '#wpmig-sync-packages' ).addEventListener( 'change', function () {
+			if ( this.value ) {
+				$( '#wpmig-sync-since' ).value = this.value;
+			}
+		} );
+
+		syncForm.addEventListener( 'submit', function ( e ) {
+			e.preventDefault();
+			var kinds = [];
+			syncForm.querySelectorAll( 'input[name="kinds"]:checked' ).forEach( function ( c ) {
+				kinds.push( c.value );
+			} );
+			var button = $( 'button[type="submit"]', syncForm );
+			button.disabled = true;
+			post( 'wpmig_sync_start', {
+				link: $( '#wpmig-sync-link' ).value,
+				kinds: kinds.join( ',' ),
+				since: $( '#wpmig-sync-since' ).value,
+				force: $( '#wpmig-sync-force' ).checked ? 1 : ''
+			} ).then( syncLoop ).catch( function ( err ) {
+				button.disabled = false;
+				syncPanel.innerHTML = '<div class="notice notice-error inline"><p>' + esc( err.message ) + '</p></div>';
+			} );
+		} );
+
+		syncPanel.addEventListener( 'click', function ( e ) {
+			var action = e.target.getAttribute( 'data-sync' );
+			if ( ! action ) {
+				return;
+			}
+			if ( action === 'undo' && ! window.confirm( 'Annuler cette synchronisation ? Les contenus importés sont retirés et les contenus de ce site remis dans leur état précédent.' ) ) {
+				return;
+			}
+			if ( action === 'confirm' && ! window.confirm( 'Importer ces contenus sur ce site ?' ) ) {
+				return;
+			}
+			e.target.disabled = true;
+			if ( action === 'dismiss' ) {
+				post( 'wpmig_sync_dismiss' ).then( function () {
+					window.location.reload();
+				} ).catch( function ( err ) {
+					e.target.disabled = false;
+					window.alert( err.message );
+				} );
+				return;
+			}
+			post( 'wpmig_sync_' + action ).then( syncLoop ).catch( function ( err ) {
+				e.target.disabled = false;
+				window.alert( err.message );
+			} );
+		} );
+
+		var initial = sync.getAttribute( 'data-state' );
+		if ( initial ) {
+			syncLoop( JSON.parse( initial ) );
+		}
+	}
 }() );
