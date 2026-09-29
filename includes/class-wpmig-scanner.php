@@ -124,7 +124,7 @@ class WPMIG_Scanner {
 		// Our own storage, whatever its location.
 		$storage = $this->to_archive_path( WPMIG_Plugin::storage_dir() );
 		if ( $storage ) {
-			$excluded[ $storage ] = 'packages WP Migration';
+			$excluded[ $storage ] = 'sauvegardes WP Migration';
 		}
 		// wp-config.php is stored in the package manifest and rewritten by the installer.
 		$excluded['wp-config.php'] = 'régénéré par l\'installeur';

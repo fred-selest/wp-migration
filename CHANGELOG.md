@@ -3,6 +3,15 @@
 Toutes les évolutions notables de WP Migration sont consignées ici.
 Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le projet respecte le [versionnage sémantique](https://semver.org/lang/fr/).
 
+## [1.7.0] - 2026-09-29
+
+### Modifié
+- **Nouvelle interface** plus simple pour l'utilisateur non technicien. La page unique de neuf blocs devient une **page d'accueil « Que voulez-vous faire ? »** avec quatre cartes (déménager ou sauvegarder, recevoir un site, récupérer les commandes et contenus, changer une adresse ou un texte) et une bande d'état, puis des **onglets** : Accueil, Sauvegardes, Recevoir un site, Synchronisation, Rechercher / Remplacer, Réglages, Aide. Chaque onglet a son adresse (`&tab=`).
+- **« Package » devient « sauvegarde »** dans l'administration, l'installeur, les messages de WP-CLI et le rapport de migration. Les commandes (`wp migration build`, `list`, `delete`…) et le format des archives ne changent pas.
+- **Sauvegarde en un clic** : « Sauvegarde complète » (fichiers et base de données) ou « Base de données seulement », avec mot de passe d'installeur généré, téléchargement et transfert direct dans la foulée ; l'assistant en trois étapes reste disponible sous « Personnaliser ». Les vérifications bloquantes du serveur sont signalées sans rien construire.
+- **Rechercher / Remplacer en mode simple** : deux champs, le type de recherche est détecté automatiquement (adresse, domaine, adresse IP ou chemin en mots entiers ; sinon texte) et les options avancées sont repliées. Sur un site migré depuis une autre adresse, un lien propose de remplacer l'ancienne adresse (lue dans le rapport de migration) par l'adresse actuelle. `--mode=auto` en ligne de commande.
+- **Aide** réécrite en trois scénarios pas à pas (changer d'hébergeur, travailler sur une copie, changer une adresse). Onglet Réglages : nettoyage automatique et version installée.
+
 ## [1.6.1] - 2026-09-29
 
 ### Ajouté
@@ -98,6 +107,7 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le pr
 - Protection de l'installeur par mot de passe.
 - Compatibilité WordPress 4.9 à 7.1 et PHP 5.6 à 8.4.
 
+[1.7.0]: https://github.com/fred-selest/wp-migration/releases/tag/v1.7.0
 [1.6.1]: https://github.com/fred-selest/wp-migration/releases/tag/v1.6.1
 [1.6.0]: https://github.com/fred-selest/wp-migration/releases/tag/v1.6.0
 [1.5.1]: https://github.com/fred-selest/wp-migration/releases/tag/v1.5.1

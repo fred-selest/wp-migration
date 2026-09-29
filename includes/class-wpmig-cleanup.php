@@ -160,7 +160,7 @@ class WPMIG_Cleanup {
 			} else {
 				$complete++;
 				if ( $keep > 0 && $complete > $keep ) {
-					$reason = sprintf( 'au-delà des %d derniers packages', $keep );
+					$reason = sprintf( 'au-delà des %d dernières sauvegardes', $keep );
 				} elseif ( $days > 0 && $age > $days * DAY_IN_SECONDS ) {
 					$reason = sprintf( 'plus de %d jours', $days );
 				}

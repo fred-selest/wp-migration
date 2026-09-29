@@ -4,7 +4,7 @@
 
 Extension WordPress pour **copier un site complet (fichiers + base de données) vers un nouveau domaine et/ou un nouvel hébergement** :
 
-1. sur le site d'origine, l'extension crée un **package** : une archive `.wpmig` + un fichier `installer.php` autonome ;
+1. sur le site d'origine, l'extension crée une **sauvegarde** : une archive `.wpmig` + un fichier `installer.php` autonome ;
 2. on dépose ces deux fichiers sur le nouveau serveur (dossier vide ou WordPress existant) ;
 3. on ouvre `https://nouveau-domaine.fr/installer.php` : l'installeur extrait les fichiers, importe la base, remplace les URL et les chemins partout (y compris dans les données sérialisées), réécrit `wp-config.php` et `.htaccess`.
 
@@ -16,13 +16,21 @@ WordPress n'a **pas** besoin d'être installé sur la destination. S'il l'est d�
 
 ## Captures d'écran
 
-### Sur le site d'origine : création du package
+### Page d'accueil : que voulez-vous faire ?
+
+![Page d'accueil](docs/screenshots/23-accueil.png)
+
+### Sur le site d'origine : créer une sauvegarde
+
+En un clic (sauvegarde complète ou base de données seule), ou avec l'assistant en 3 étapes (« Personnaliser ») :
+
+![Sauvegarde en un clic](docs/screenshots/24-sauvegarde-en-un-clic.png)
 
 | 1. Configuration | 2. Analyse |
 |---|---|
-| ![Configuration du package](docs/screenshots/1-creation-configuration.png) | ![Analyse du site](docs/screenshots/2-creation-analyse.png) |
-| **3. Package prêt** (archive, installeur et mot de passe) | **Liste des packages** |
-| ![Package prêt](docs/screenshots/3-creation-package-pret.png) | ![Liste des packages](docs/screenshots/4-liste-des-packages.png) |
+| ![Configuration de la sauvegarde](docs/screenshots/1-creation-configuration.png) | ![Analyse du site](docs/screenshots/2-creation-analyse.png) |
+| **3. Sauvegarde prête** (archive, installeur et mot de passe) | **Liste des sauvegardes** |
+| ![Sauvegarde prête](docs/screenshots/3-creation-sauvegarde-prete.png) | ![Liste des sauvegardes](docs/screenshots/4-liste-des-sauvegardes.png) |
 
 ### Transfert direct de serveur à serveur
 
@@ -48,13 +56,13 @@ WordPress n'a **pas** besoin d'être installé sur la destination. S'il l'est d�
 
 ### Rechercher et remplacer dans la base de données
 
-| Formulaire | Analyse avant remplacement |
+| Formulaire (deux champs, options avancées repliées) | Analyse avant remplacement |
 |---|---|
 | ![Rechercher et remplacer](docs/screenshots/20-rechercher-remplacer-formulaire.png) | ![Analyse du remplacement](docs/screenshots/21-rechercher-remplacer-analyse.png) |
 
 ![Sauvegarde de la base de données avant le remplacement](docs/screenshots/22-rechercher-remplacer-sauvegarde.png)
 
-### Nettoyage automatique des anciens packages
+### Nettoyage automatique des anciennes sauvegardes (onglet Réglages)
 
 ![Nettoyage automatique](docs/screenshots/14-nettoyage-automatique.png)
 
@@ -97,15 +105,31 @@ L'en-tête `Update URI` empêche WordPress de chercher l'extension sur wordpress
 
 Pour une installation en 1.3.0 ou antérieure, la mise à jour vers la 1.4.0 se fait une dernière fois manuellement : téléverser le zip et choisir « Remplacer la version installée ».
 
+## Prise en main
+
+Le menu **WP Migration** s'ouvre sur une **page d'accueil** qui pose la question « Que voulez-vous faire ? » avec quatre cartes, et une bande d'état (dernière sauvegarde, lien de synchronisation actif, opération à reprendre). Chaque carte mène à un onglet :
+
+| Onglet | Pour… |
+|---|---|
+| **Accueil** | choisir ce que l'on veut faire, voir l'état et le rapport de la dernière migration |
+| **Sauvegardes** | créer une sauvegarde en un clic, la personnaliser, télécharger, lancer un transfert direct, supprimer |
+| **Recevoir un site** | remplacer ce site par une sauvegarde (FTP ou installeur) ou par un autre site, sans FTP, avec un lien de transfert |
+| **Synchronisation** | 1. autoriser la synchronisation (site en ligne), 2. récupérer les commandes et contenus (copie de travail) |
+| **Rechercher / Remplacer** | changer une adresse ou un texte dans toute la base de données |
+| **Réglages** | nettoyage automatique des anciennes sauvegardes, version installée |
+| **Aide** | les trois scénarios pas à pas |
+
+> Une **sauvegarde** est le couple archive `.wpmig` + `installer.php` : elle sert aussi bien à déménager le site qu'à en garder une copie pour revenir en arrière. (Dans les versions antérieures à 1.7.0, on parlait de « package » ; les commandes WP-CLI `wp migration build`, `list` et `delete` restent inchangées.)
+
 ## Migrer un site
 
-### 1. Créer le package (site d'origine)
+### 1. Créer la sauvegarde (site d'origine)
 
-**WP Migration → Créer un package**, puis un assistant en 3 étapes :
+**WP Migration → Sauvegardes** : deux boutons créent une sauvegarde en un clic, avec les réglages habituels et un mot de passe d'installeur généré (**Sauvegarde complète** : fichiers et base de données ; **Base de données seulement**). **Personnaliser** ouvre un assistant en 3 étapes :
 
 1. **Configuration** : nom, site complet ou base de données seule, exclusions (dossiers ou fichiers, extensions, médias), données des tables de journaux et de cache à laisser de côté (la table est recréée **vide**, jamais supprimée), filtres (transients, spam, révisions), mot de passe de l'installeur (**généré automatiquement**, à noter).
 2. **Analyse** : vérifications du serveur, nombre et taille des fichiers, fichiers volumineux, fichiers illisibles, tables et tailles ; les tables de journaux ou de cache volumineuses sont signalées (jamais `postmeta`, les commandes ou les registres RGPD).
-3. **Construction** : export SQL puis archive, avec barre de progression. Téléchargez ensuite l'**archive** et **installer.php**.
+3. **Création** : export SQL puis archive, avec barre de progression. Téléchargez ensuite l'**archive** et **installer.php**.
 
 En SSH : `wp migration build --dir=/chemin/export` (un mot de passe est généré et affiché ; `--password=…` pour le choisir, voir `wp help migration build`).
 
@@ -128,9 +152,9 @@ php installer.php --help
 
 ### Transfert direct (sans FTP)
 
-L'archive peut aller **directement du site d'origine au nouveau serveur**, sans passer par votre ordinateur ni par le FTP. Sur le site d'origine, **WP Migration → Packages → Transfert direct** crée un lien secret, valable 24 h et révocable. Ensuite, trois façons de l'utiliser :
+L'archive peut aller **directement du site d'origine au nouveau serveur**, sans passer par votre ordinateur ni par le FTP. Sur le site d'origine, **WP Migration → Sauvegardes → Transfert direct** crée un lien secret, valable 24 h et révocable. Ensuite, trois façons de l'utiliser :
 
-- **WordPress déjà installé sur la destination** (le cas le plus simple) : installez et activez WP Migration sur ce WordPress, collez le lien dans **WP Migration → Importer un site**. L'installeur du package est placé sur le serveur, récupère l'archive et reprend les accès à la base de données du `wp-config.php` existant. Le WordPress de destination est entièrement remplacé par le site d'origine : connectez-vous ensuite avec les identifiants du site d'origine.
+- **WordPress déjà installé sur la destination** (le cas le plus simple) : installez et activez WP Migration sur ce WordPress, collez le lien dans **WP Migration → Recevoir un site**. L'installeur de la sauvegarde est placé sur le serveur, récupère l'archive et reprend les accès à la base de données du `wp-config.php` existant. Le WordPress de destination est entièrement remplacé par le site d'origine : connectez-vous ensuite avec les identifiants du site d'origine.
 - **Dossier vide** : déposez seulement `installer.php` (quelques centaines de Ko), ouvrez-le et collez le lien quand il signale l'archive absente.
 - **En SSH** :
 
@@ -139,7 +163,7 @@ curl -o installer.php 'LIEN&file=installer'
 php installer.php --source-url='LIEN' --url=https://nouveau-domaine.fr --db-name=base --db-user=utilisateur --db-pass=secret
 ```
 
-Le téléchargement se fait par morceaux de 8 Mo (requêtes HTTP `Range`) : il reprend après une coupure, fonctionne avec cURL ou, à défaut, les flux PHP, puis l'archive est contrôlée (package attendu, signature de fin, CRC de chaque bloc) avant toute modification. En ligne de commande sur le site d'origine : `wp migration transfer-link <id>` (`--hours=`, `--revoke`).
+Le téléchargement se fait par morceaux de 8 Mo (requêtes HTTP `Range`) : il reprend après une coupure, fonctionne avec cURL ou, à défaut, les flux PHP, puis l'archive est contrôlée (sauvegarde attendue, signature de fin, CRC de chaque bloc) avant toute modification. En ligne de commande sur le site d'origine : `wp migration transfer-link <id>` (`--hours=`, `--revoke`).
 
 ### Rapport de migration
 
@@ -156,9 +180,9 @@ Le rapport se télécharge en texte (bouton « Télécharger le rapport ») ; en
 
 Scénario type : le site est copié sur un serveur de développement ou de préproduction, on y travaille plusieurs jours (thème, extensions, pages…), pendant que **le site d'origine reste en ligne** et reçoit des commandes, des clients, des avis, de nouveaux produits. Avant la mise en ligne de la copie, la synchronisation y rapatrie tout ce qui a été créé ou modifié sur le site d'origine depuis la copie.
 
-1. **Sur le site d'origine** (WP Migration 1.5.0 ou plus récent) : **WP Migration → Autoriser la synchronisation → Créer un lien** (valable 24 h, 3 ou 7 jours, révocable). Ce site est seulement lu.
-2. **Sur la copie** : **WP Migration → Synchroniser le contenu**, coller le lien, choisir les contenus, puis **Analyser**. La date de la copie est trouvée automatiquement (rapport de migration, synchronisation précédente) ou choisie parmi les packages du site d'origine.
-3. Vérifier l'analyse (ajouts, mises à jour, contenus conservés, points à connaître), éventuellement **Sauvegarder la base de données** (package de la base seule), puis **Importer ces contenus**. Rien n'est modifié avant cette confirmation, et la dernière synchronisation peut être **annulée**.
+1. **Sur le site d'origine** (WP Migration 1.5.0 ou plus récent) : **WP Migration → Synchronisation → 1. Sur le site en ligne**, **Créer un lien** (valable 24 h, 3 ou 7 jours, révocable). Ce site est seulement lu.
+2. **Sur la copie** : **WP Migration → Synchronisation → 2. Sur la copie de travail**, coller le lien, choisir les contenus, puis **Analyser**. La date de la copie est trouvée automatiquement (rapport de migration, synchronisation précédente) ou choisie parmi les sauvegardes du site d'origine.
+3. Vérifier l'analyse (ajouts, mises à jour, contenus conservés, points à connaître), éventuellement **Sauvegarder la base de données** (sauvegarde de la base seule), puis **Importer ces contenus**. Rien n'est modifié avant cette confirmation, et la dernière synchronisation peut être **annulée**.
 4. Recommencer autant que nécessaire : seules les nouveautés sont reprises. Faire une dernière synchronisation juste avant la mise en ligne, idéalement avec la boutique d'origine en maintenance pour ne perdre aucune commande entre les deux.
 
 En SSH : `wp migration sync-link` sur le site d'origine, puis `wp migration sync '<lien>' --dry-run`, `wp migration sync '<lien>' --yes`, `wp migration sync-undo` sur la copie (options `--types=orders,customers,products,coupons,posts,media,comments`, `--since="AAAA-MM-JJ HH:MM"`, `--force`).
@@ -183,20 +207,22 @@ L'option « Remplacer aussi les produits, pages et médias modifiés sur ce site
 
 Après une migration (ou à tout moment), pour changer une adresse oubliée, un domaine, un chemin serveur, un nom de société… dans **tout le contenu du site**. Un « rechercher / remplacer » SQL classique casse les données sérialisées (réglages de thème, constructeurs de pages, widgets) parce que la longueur des textes y est mémorisée ; ici chaque valeur est analysée et ses longueurs recalculées, y compris quand la valeur est sérialisée dans une autre valeur sérialisée ou dans du JSON.
 
-**WP Migration → Rechercher et remplacer**, puis :
+**WP Migration → Rechercher / Remplacer**, puis :
 
-1. Saisir le texte à **rechercher** et son **remplacement** (vide pour supprimer), et choisir le type de recherche :
+1. Saisir le texte à **rechercher** et son **remplacement** (vide pour supprimer). Le type de recherche est **détecté automatiquement** (adresse, domaine, adresse IP ou chemin → mots entiers ; sinon texte) ; sous **Options avancées**, on peut l'imposer :
    - **URL, domaine ou chemin** (par défaut) : mots entiers — `http://a.fr` ne touche pas `http://a.frite.com` ; les variantes `https`, `//`, avec / sans `www.`, JSON (`http:\/\/`) et URL encodée (`http%3A%2F%2F`) sont traitées ensemble. Un chemin commence par `/` (`/home/ancien/public_html` → `/var/www/site`).
    - **Texte** : toutes les occurrences, où qu'elles soient (avec, en option, les formes JSON et URL encodée).
    - **Expression régulière** : `/motif/i`, avec `$1`, `$2`… pour les groupes capturés (ajouter `u` pour les caractères accentués).
-2. Options : ignorer la casse, ne traiter qu'une partie des tables, modifier aussi les `guid` des articles (déconseillé : ce ne sont pas des liens, les lecteurs RSS s'en servent pour reconnaître les articles déjà lus).
+2. Options avancées : ignorer la casse, ne traiter qu'une partie des tables, modifier aussi les `guid` des articles (déconseillé : ce ne sont pas des liens, les lecteurs RSS s'en servent pour reconnaître les articles déjà lus).
 3. **Analyser** : rien n'est modifié. Le résultat donne, par table, le nombre de lignes et d'occurrences ainsi que des exemples avant / après (la partie modifiée est surlignée).
-4. **Sauvegarder la base de données** (bouton à côté de « Remplacer ») : un package de la base seule, sans rien exclure, à télécharger avec son installeur et son mot de passe (affiché une seule fois) ; en SSH : `wp migration build --db-only`.
+4. **Sauvegarder la base de données** (bouton à côté de « Remplacer ») : une sauvegarde de la base seule, sans rien exclure, à télécharger avec son installeur et son mot de passe (affiché une seule fois) ; en SSH : `wp migration build --db-only`.
 5. **Remplacer** après vérification, puis vider les caches (extension de cache, CSS générés par le constructeur de pages).
 
 **Annulation** : la valeur d'origine de chaque colonne modifiée est enregistrée avant le changement ; « Annuler ce remplacement » (ou depuis l'historique des 10 derniers) la remet, sauf si elle a été modifiée depuis (elle est alors laissée telle quelle et comptée). Les journaux des 5 derniers remplacements sont conservés dans le dossier de stockage.
 
 Ne sont **jamais** modifiés : les noms des réglages et des métadonnées (`option_name`, `meta_key`), les mots de passe et clés d'activation des comptes, les réglages de WP Migration et, sauf option, les `guid` des articles. Les colonnes binaires et les tables sans clé primaire sont ignorées (et signalées). Remplacer l'adresse du site elle-même (`siteurl` / `home`) est possible mais déconnecte l'utilisateur : l'analyse le signale, et les réglages sont traités en dernier pour que la session tienne le plus longtemps possible.
+
+Sur un site migré depuis une autre adresse, un lien propose de remplacer l'ancienne adresse (lue dans le rapport de migration) par l'adresse actuelle.
 
 En SSH :
 
@@ -210,14 +236,14 @@ wp migration replace-undo            # dernier remplacement (ou son identifiant)
 
 Contrairement à `wp search-replace`, l'analyse détaillée, l'annulation et le traitement des variantes d'URL sont intégrés.
 
-### Nettoyage automatique des anciens packages
+### Nettoyage automatique des anciennes sauvegardes
 
-Les packages occupent de l'espace sur l'hébergement et contiennent une copie complète du site (base de données comprise). L'extension les nettoie automatiquement **après chaque construction et une fois par jour** (WP-Cron) :
+Les sauvegardes occupent de l'espace sur l'hébergement et contiennent une copie complète du site (base de données comprise). L'extension les nettoie automatiquement **après chaque création et une fois par jour** (WP-Cron) :
 
-- conserve les **5 derniers** packages terminés et supprime ceux de plus de **30 jours** (réglable dans l'encart « Nettoyage automatique », 0 désactive une règle) ;
-- supprime les constructions **abandonnées ou en échec** au bout de 24 h : leur dossier de travail contient un export SQL complet ;
+- conserve les **5 dernières** sauvegardes terminées et supprime celles de plus de **30 jours** (réglable dans **WP Migration → Réglages**, encart « Nettoyage automatique », 0 désactive une règle) ;
+- supprime les créations **abandonnées ou en échec** au bout de 24 h : leur dossier de travail contient un export SQL complet ;
 - supprime les fichiers orphelins du dossier de stockage ;
-- ne supprime **jamais** un package dont le lien de transfert direct est actif, pour ne pas interrompre une migration en cours.
+- ne supprime **jamais** une sauvegarde dont le lien de transfert direct est actif, pour ne pas interrompre une migration en cours.
 
 L'encart affiche l'espace utilisé, le prochain et le dernier nettoyage, et propose « Enregistrer et nettoyer maintenant ». En ligne de commande : `wp migration cleanup --dry-run` pour voir ce qui serait supprimé, `--keep=` et `--days=` pour d'autres règles ponctuelles.
 
@@ -252,7 +278,7 @@ L'encart affiche l'espace utilisé, le prochain et le dernier nettoyage, et prop
 
 - Dossier de stockage `wp-content/wpmig-backups` protégé (`.htaccess`, `web.config`, `index.php`) et noms de fichiers contenant un identifiant aléatoire (pour nginx) ; téléchargements servis par PHP après vérification des droits et d'un nonce.
 - Installeur protégé par un mot de passe généré automatiquement (seul un hachage salé est stocké), session liée à un jeton ; une installation lancée ne peut pas être reprise depuis un autre navigateur sans le mot de passe. Sans mot de passe, n'importe qui trouvant `installer.php` pourrait lancer l'installation avec sa propre base de données : c'est possible mais déconseillé, et signalé par l'installeur.
-- Lien de transfert direct : jeton aléatoire de 128 bits (seul son hachage est conservé), valable 24 h, révocable, un seul lien actif par package, chaque téléchargement est journalisé (adresse IP) ; la même erreur 403 est renvoyée pour un package inconnu ou une clé fausse. L'import depuis l'administration exige le droit d'installer des extensions et respecte `DISALLOW_FILE_MODS`.
+- Lien de transfert direct : jeton aléatoire de 128 bits (seul son hachage est conservé), valable 24 h, révocable, un seul lien actif par sauvegarde, chaque téléchargement est journalisé (adresse IP) ; la même erreur 403 est renvoyée pour une sauvegarde inconnue ou une clé fausse. L'import depuis l'administration exige le droit d'installer des extensions et respecte `DISALLOW_FILE_MODS`.
 - La sauvegarde du `wp-config.php` remplacé est un fichier `.php` qui s'arrête immédiatement : elle n'est jamais lisible depuis le web.
 - Lien de synchronisation : jeton aléatoire de 128 bits (seul son hachage est conservé), valable 24 h à 7 jours, révocable, dernière utilisation affichée ; il donne accès en lecture aux contenus et comptes clients du site d'origine : utilisez HTTPS et révoquez-le après usage. Les jetons de session des clients ne sont jamais transmis, et seuls les fichiers de la médiathèque (hors PHP) peuvent être téléchargés.
 - L'installeur propose de se supprimer avec l'archive à la fin ; l'administration du nouveau site affiche un avertissement tant que des fichiers d'installation subsistent.
@@ -278,7 +304,7 @@ includes/lib/                    bibliothèque sans dépendance à WordPress, em
   class-wpmig-replacer.php         remplacement compatible sérialisation
   class-wpmig-sql.php              échappement et analyse des INSERT
   class-wpmig-db-importer.php      import SQL (mysqli), compatibilité serveurs
-includes/                        extension : package, analyse, export SQL, archivage, admin, WP-CLI
+includes/                        extension : sauvegarde, analyse, export SQL, archivage, admin, WP-CLI
 installer/installer.php.tpl      modèle de l'installeur autonome
 assets/                          interface d'administration
 tests/run-tests.php              tests unitaires (sans WordPress)

@@ -92,7 +92,7 @@ class WPMIG_CLI {
 			WP_CLI::error( $e->getMessage() );
 			return;
 		}
-		WP_CLI::log( 'Package ' . $package->data['id'] );
+		WP_CLI::log( 'Sauvegarde ' . $package->data['id'] );
 		$last = '';
 		while ( in_array( $package->data['status'], array( 'scanning', 'scanned', 'building' ), true ) ) {
 			$state = $package->step( 5 );
@@ -127,7 +127,7 @@ class WPMIG_CLI {
 			$archive   = $dir . '/' . basename( $archive );
 			$installer = $dir . '/installer.php';
 		}
-		WP_CLI::success( 'Package prêt (' . size_format( filesize( $archive ), 1 ) . ')' );
+		WP_CLI::success( 'Sauvegarde prête (' . size_format( filesize( $archive ), 1 ) . ')' );
 		WP_CLI::log( 'Archive     : ' . $archive );
 		WP_CLI::log( 'Installeur  : ' . $installer );
 		if ( '' !== $options['password'] ) {
@@ -184,7 +184,7 @@ class WPMIG_CLI {
 	public function transfer_link( $args, $assoc_args ) {
 		$package = WPMIG_Package::load( $args[0] );
 		if ( ! $package ) {
-			WP_CLI::error( 'Package introuvable.' );
+			WP_CLI::error( 'Sauvegarde introuvable.' );
 		}
 		if ( isset( $assoc_args['revoke'] ) ) {
 			WPMIG_Transfer::revoke( $package );
@@ -457,7 +457,7 @@ class WPMIG_CLI {
 	 * : Replacement. Use "$1"... for the captured groups of a pattern.
 	 *
 	 * [--mode=<mode>]
-	 * : "url" (whole words, http/https/JSON/encoded variants), "text" (every occurrence) or "regex".
+	 * : "url" (whole words, http/https/JSON/encoded variants), "text" (every occurrence), "regex", or "auto" (url when the search looks like an address, domain or path, otherwise text).
 	 * ---
 	 * default: url
 	 * ---
@@ -624,9 +624,9 @@ class WPMIG_CLI {
 	public function delete( $args ) {
 		$package = WPMIG_Package::load( $args[0] );
 		if ( ! $package ) {
-			WP_CLI::error( 'Package introuvable.' );
+			WP_CLI::error( 'Sauvegarde introuvable.' );
 		}
 		$package->delete();
-		WP_CLI::success( 'Package supprimé.' );
+		WP_CLI::success( 'Sauvegarde supprimée.' );
 	}
 }

@@ -13,7 +13,7 @@
  * @package WPMigration
  */
 
-define( 'WPMIG_INSTALLER', '1.6.1' );
+define( 'WPMIG_INSTALLER', '1.7.0' );
 
 @ini_set( 'display_errors', '0' ); // phpcs:ignore
 error_reporting( E_ALL & ~E_DEPRECATED & ~E_NOTICE & ~E_WARNING );
@@ -2328,9 +2328,9 @@ class WPMIG_Installer {
 	private function http_error( array $res ) {
 		switch ( $res['status'] ) {
 			case 403:
-				return 'Lien refusé par le site d\'origine : il est invalide, expiré ou révoqué. Créez un nouveau lien depuis WP Migration > Packages > Transfert direct.';
+				return 'Lien refusé par le site d\'origine : il est invalide, expiré ou révoqué. Créez un nouveau lien depuis WP Migration > Sauvegardes > Transfert direct.';
 			case 404:
-				return 'Package introuvable sur le site d\'origine (supprimé ?).';
+				return 'Sauvegarde introuvable sur le site d\'origine (supprimée ?).';
 			case 200:
 				return 'Le serveur d\'origine ne gère pas les téléchargements partiels : vérifiez que le lien est bien celui de WP Migration, ou envoyez l\'archive par FTP.';
 		}
@@ -2362,7 +2362,7 @@ class WPMIG_Installer {
 		$query = (string) parse_url( $url, PHP_URL_QUERY );
 		parse_str( $query, $args );
 		if ( ! empty( $args['id'] ) && ! empty( $this->config['package'] ) && $args['id'] !== $this->config['package'] ) {
-			throw new WPMIG_Exception( 'Ce lien correspond à un autre package (' . $args['id'] . ') que cet installeur (' . $this->config['package'] . ') : utilisez l\'installer.php du même package.' );
+			throw new WPMIG_Exception( 'Ce lien correspond à une autre sauvegarde (' . $args['id'] . ') que cet installeur (' . $this->config['package'] . ') : utilisez l\'installer.php de la même sauvegarde.' );
 		}
 
 		$res = $this->http_range( $url, 0, 15 );
@@ -2454,7 +2454,7 @@ class WPMIG_Installer {
 			@unlink( $part );
 			unset( $this->state['download'] );
 			$this->save_state();
-			throw new WPMIG_Exception( 'Ce lien correspond à un autre package (' . $manifest['package'] . ') que cet installeur (' . $this->config['package'] . ') : utilisez l\'installer.php du même package.' );
+			throw new WPMIG_Exception( 'Ce lien correspond à une autre sauvegarde (' . $manifest['package'] . ') que cet installeur (' . $this->config['package'] . ') : utilisez l\'installer.php de la même sauvegarde.' );
 		}
 		$target = $this->root . '/' . ( ! empty( $this->config['archive'] ) ? $this->config['archive'] : $manifest['name'] . '_' . $manifest['package'] . '_archive.wpmig' );
 		if ( ! @rename( $part, $target ) && ! ( @copy( $part, $target ) && @unlink( $part ) ) ) {
@@ -2557,7 +2557,7 @@ class WPMIG_Installer {
 	 */
 	public function dispatch() {
 		if ( empty( $this->config['package'] ) ) {
-			echo 'Ce fichier est le modèle de l\'installeur WP Migration : utilisez le fichier installer.php généré avec votre package.';
+			echo 'Ce fichier est le modèle de l\'installeur WP Migration : utilisez le fichier installer.php généré avec votre sauvegarde.';
 			return;
 		}
 		if ( $this->cli ) {
@@ -2877,7 +2877,7 @@ class WPMIG_Installer {
 			fwrite( STDOUT, $msg . "\n" );
 		};
 		if ( isset( $opts['h'] ) || isset( $opts['help'] ) ) {
-			$out( 'WP Migration — installeur (package ' . $this->config['package'] . ')' );
+			$out( 'WP Migration — installeur (sauvegarde ' . $this->config['package'] . ')' );
 			$out( '' );
 			$out( 'Usage : php ' . basename( $this->file ) . ' --url=https://nouveau-site.fr --db-name=base --db-user=utilisateur --db-pass=secret [options]' );
 			$out( '' );
@@ -3095,7 +3095,7 @@ table.checks td{padding:3px 0}
 	var BOOT = <?php echo json_encode( $boot ); ?>;
 	var token = '', info = null, lastTest = null, retries = 0;
 	var app = document.getElementById('app');
-	document.getElementById('subtitle').textContent = 'Package « ' + BOOT.package + ' » — ' + BOOT.source + ' — ' + BOOT.created + ' UTC';
+	document.getElementById('subtitle').textContent = 'Sauvegarde « ' + BOOT.package + ' » — ' + BOOT.source + ' — ' + BOOT.created + ' UTC';
 
 	function esc(s) { return String(s === null || s === undefined ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
 	function setStep(n) {
@@ -3173,7 +3173,7 @@ table.checks td{padding:3px 0}
 			'<li><strong>la récupérer directement depuis le site d\'origine</strong>, sans passer par votre ordinateur.</li></ul></div>' +
 			'<div class="card"><h2>Transfert direct depuis ' + esc(p.home) + '</h2>' +
 			(r.can_http ? '' : msg('error', 'Ce serveur ne peut pas télécharger de fichier (ni cURL ni allow_url_fopen) : utilisez le FTP.')) +
-			'<p class="hint" style="margin-top:-6px">Sur le site d\'origine : <strong>WP Migration → Packages → Transfert direct</strong>, puis copiez le lien affiché.</p>' +
+			'<p class="hint" style="margin-top:-6px">Sur le site d\'origine : <strong>WP Migration → Sauvegardes → Transfert direct</strong>, puis copiez le lien affiché.</p>' +
 			'<form id="dlform"><label for="f_source_url">Lien de transfert</label>' +
 			'<input type="url" id="f_source_url" required placeholder="' + esc(p.home) + '/wp-admin/admin-ajax.php?action=wpmig_transfer&amp;id=…&amp;key=…">' +
 			'<div id="dlmsg"></div>' +

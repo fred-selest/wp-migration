@@ -87,6 +87,27 @@ class WPMIG_Search {
 	}
 
 	/**
+	 * Type of search that fits a text: an address, a domain or a path is searched
+	 * as a whole word with its variants, anything else as plain text.
+	 *
+	 * @param string $search Search.
+	 * @return string "url" or "text".
+	 */
+	public static function detect( $search ) {
+		$s = trim( $search );
+		if ( preg_match( '#^(https?:)?//\S#i', $s ) ) {
+			return 'url';
+		}
+		if ( strlen( $s ) >= 4 && preg_match( '#^/[^\s/]\S*$#', $s ) && ! preg_match( '#[()\[\]\\*+?|^$]#', $s ) ) {
+			return 'url';
+		}
+		if ( preg_match( '#^([a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9-]+)*\.[a-z]{2,}|localhost|\d{1,3}(\.\d{1,3}){3})(:\d+)?(/\S*)?$#i', $s ) ) {
+			return 'url';
+		}
+		return 'text';
+	}
+
+	/**
 	 * Constructor.
 	 *
 	 * @param array $state State.
@@ -172,6 +193,9 @@ class WPMIG_Search {
 		$mode   = isset( $p['mode'] ) && isset( $modes[ $p['mode'] ] ) ? $p['mode'] : 'text';
 		if ( '' === $search ) {
 			throw new WPMIG_Exception( 'Indiquez le texte à rechercher.' );
+		}
+		if ( isset( $p['mode'] ) && 'auto' === $p['mode'] ) {
+			$mode = self::detect( $search );
 		}
 		$known  = WPMIG_DB_Exporter::site_tables();
 		$tables = array();

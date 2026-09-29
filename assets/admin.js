@@ -3,9 +3,6 @@
 	'use strict';
 
 	var wizard = document.getElementById( 'wpmig-wizard' );
-	if ( ! wizard ) {
-		return;
-	}
 	var form = document.getElementById( 'wpmig-form' );
 	var current = null;
 	var retries = 0;
@@ -204,7 +201,7 @@
 			html += '</ul>';
 		}
 		if ( blocking ) {
-			html += '<div class="notice notice-error inline"><p>Des erreurs bloquantes empêchent la construction du package.</p></div>';
+			html += '<div class="notice notice-error inline"><p>Des erreurs bloquantes empêchent la création de la sauvegarde.</p></div>';
 		}
 		$( '.wpmig-report', panel ).innerHTML = html;
 		$( '.wpmig-progress', panel ).hidden = true;
@@ -269,7 +266,7 @@
 
 	function renderResult( state ) {
 		var panel = wizard.querySelector( '.wpmig-panel[data-step="3"]' );
-		var html = '<div class="notice notice-success inline"><p><strong>Package prêt !</strong> Téléchargez les deux fichiers et déposez-les dans le dossier du nouveau site.</p></div>';
+		var html = '<div class="notice notice-success inline"><p><strong>Sauvegarde prête !</strong> Téléchargez les deux fichiers et déposez-les dans le dossier du nouveau site.</p></div>';
 		html += '<p class="wpmig-downloads">';
 		html += '<a class="button button-primary button-hero" href="' + esc( downloadUrl( state.id, 'archive' ) ) + '">Archive (' + esc( state.sizes.archive_h || '' ) + ')</a> ';
 		html += '<a class="button button-primary button-hero" href="' + esc( downloadUrl( state.id, 'installer' ) ) + '">installer.php</a>';
@@ -277,7 +274,7 @@
 		if ( password && state.secured ) {
 			html += '<p>Mot de passe de l\'installeur : <code class="wpmig-password">' + esc( password ) + '</code> — notez-le, il ne sera plus affiché.</p>';
 		} else if ( state.secured ) {
-			html += '<p>Installeur protégé par le mot de passe défini à la création du package.</p>';
+			html += '<p>Installeur protégé par le mot de passe défini à la création de la sauvegarde.</p>';
 		} else {
 			html += '<div class="notice notice-warning inline"><p>Installeur <strong>sans mot de passe</strong> : ne le laissez pas en ligne sans surveillance.</p></div>';
 		}
@@ -288,7 +285,7 @@
 			} );
 			html += '</ul></details>';
 		}
-		html += '<p><button type="button" class="button" id="wpmig-result-transfer">Transfert direct de serveur à serveur</button> <a class="button" href="">Retour à la liste des packages</a></p>';
+		html += '<p><button type="button" class="button" id="wpmig-result-transfer">Transfert direct de serveur à serveur</button> <a class="button" href="">Retour à la liste des sauvegardes</a></p>';
 		html += '<div id="wpmig-result-transfer-panel"></div>';
 		$( '.wpmig-result', panel ).innerHTML = html;
 		$( '#wpmig-result-transfer', panel ).addEventListener( 'click', function () {
@@ -298,8 +295,9 @@
 		$( '.wpmig-progress', panel ).hidden = true;
 	}
 
-	/* Backup of the database (a package without files), for the tools that change it. */
-	function backupDb( box, name ) {
+	/* Backup created in one click: the whole site, or the database only (also used before the tools that change it). */
+	function backupDb( box, name, opts ) {
+		opts = opts || { dbOnly: true };
 		var pass = generatePassword();
 		var failures = 0;
 		box.innerHTML = '<div class="wpmig-bar"><span style="width:3%"></span></div><p class="wpmig-msg">Sauvegarde de la base de données…</p>';
@@ -326,6 +324,15 @@
 				throw new Error( state.error );
 			}
 			if ( state.status === 'scanned' ) {
+				var blocking = ( state.report && state.report.checks ? state.report.checks : [] ).filter( function ( c ) {
+					return c.status === 'error';
+				} );
+				if ( blocking.length ) {
+					post( 'wpmig_delete', { id: state.id } );
+					throw new Error( blocking.map( function ( c ) {
+						return c.label + ' : ' + c.value;
+					} ).join( ' ; ' ) + ' — utilisez « Personnaliser » pour le détail.' );
+				}
 				return later( 'wpmig_build', state.id ).then( run );
 			}
 			if ( state.status === 'complete' ) {
@@ -333,12 +340,20 @@
 			}
 			return later( 'wpmig_step', state.id ).then( run );
 		};
-		// A backup keeps everything: nothing is skipped.
-		var options = { name: name, db_only: true, skip_transients: false, skip_spam: false, skip_revisions: false, password: pass };
+		// A database backup keeps everything: nothing is skipped. A whole site keeps the usual defaults.
+		var options = opts.dbOnly ? { name: name, db_only: true, skip_transients: false, skip_spam: false, skip_revisions: false, password: pass } : { name: name, password: pass };
 		return post( 'wpmig_create', { options: JSON.stringify( options ) } ).then( run ).then( function ( state ) {
-			var html = '<div class="notice notice-success inline"><p><strong>Sauvegarde prête</strong> (' + esc( state.sizes.archive_h || '' ) + '). Téléchargez les deux fichiers et gardez-les avec le mot de passe : ils permettent de rétablir la base avec l\'installeur. Elle figure aussi dans la liste des packages.</p></div>';
-			html += '<p class="wpmig-downloads"><a class="button" href="' + esc( downloadUrl( state.id, 'archive' ) ) + '">Archive (' + esc( state.sizes.archive_h || '' ) + ')</a> <a class="button" href="' + esc( downloadUrl( state.id, 'installer' ) ) + '">installer.php</a></p>';
+			var what = opts.dbOnly ? 'Téléchargez les deux fichiers et gardez-les avec le mot de passe : ils permettent de rétablir la base avec l\'installeur.' : 'Téléchargez les deux fichiers et déposez-les dans le dossier du nouveau site, puis ouvrez installer.php.';
+			var html = '<div class="notice notice-success inline"><p><strong>Sauvegarde prête</strong> (' + esc( state.sizes.archive_h || '' ) + '). ' + what + ' Elle figure aussi dans la liste des sauvegardes.</p></div>';
+			html += '<p class="wpmig-downloads"><a class="button button-primary" href="' + esc( downloadUrl( state.id, 'archive' ) ) + '">Archive (' + esc( state.sizes.archive_h || '' ) + ')</a> <a class="button button-primary" href="' + esc( downloadUrl( state.id, 'installer' ) ) + '">installer.php</a>';
+			if ( opts.transfer ) {
+				html += ' <button type="button" class="button" data-backup-transfer="' + esc( state.id ) + '">Transfert direct de serveur à serveur</button> <a class="button" href="">Afficher la liste des sauvegardes</a>';
+			}
+			html += '</p>';
 			html += '<p>Mot de passe de l\'installeur : <code class="wpmig-password">' + esc( pass ) + '</code> — notez-le, il ne sera plus affiché.</p>';
+			if ( opts.transfer ) {
+				html += '<div class="wpmig-backup-transfer"></div>';
+			}
 			box.innerHTML = html;
 			return state;
 		} ).catch( function ( err ) {
@@ -347,66 +362,94 @@
 		} );
 	}
 
-	/* Events. */
-	document.getElementById( 'wpmig-new' ).addEventListener( 'click', function () {
-		form.reset();
-		form.elements.password.value = generatePassword();
-		toggleFilesOptions();
-		showStep( 1 );
-		wizard.scrollIntoView( { behavior: 'smooth' } );
-	} );
-
-	form.addEventListener( 'change', function ( e ) {
-		if ( e.target.name === 'db_only' ) {
-			toggleFilesOptions();
-		}
-	} );
-
-	form.addEventListener( 'submit', function ( e ) {
-		e.preventDefault();
-		showStep( 2 );
-		var panel = wizard.querySelector( '.wpmig-panel[data-step="2"]' );
-		$( '.wpmig-progress', panel ).hidden = false;
-		$( '.wpmig-actions', panel ).hidden = true;
-		$( '.wpmig-report', panel ).innerHTML = '';
-		progress( panel, { progress: 0, message: 'Démarrage de l\'analyse…' } );
-		var options = collectOptions();
-		password = options.password || '';
-		if ( ! password && ! window.confirm( 'Créer un installeur sans mot de passe ? C\'est déconseillé : toute personne trouvant installer.php en ligne pourrait l\'utiliser.' ) ) {
-			showStep( 1 );
-			return;
-		}
-		post( 'wpmig_create', { options: JSON.stringify( options ) } ).then( loop ).catch( function ( err ) {
-			error( err.message );
-		} );
-	} );
-
-	wizard.addEventListener( 'click', function ( e ) {
-		var action = e.target.getAttribute( 'data-action' );
-		if ( ! action ) {
-			return;
-		}
-		if ( action === 'genpass' ) {
-			form.elements.password.value = generatePassword();
-		} else if ( action === 'cancel' ) {
-			wizard.hidden = true;
-		} else if ( action === 'discard' ) {
-			if ( current ) {
-				post( 'wpmig_delete', { id: current.id } );
+	/* One-click backups (Sauvegardes tab). */
+	var quick = document.getElementById( 'wpmig-quick' );
+	if ( quick ) {
+		quick.addEventListener( 'click', function ( e ) {
+			var choice = e.target.closest( '[data-quick]' );
+			var transfer = e.target.getAttribute( 'data-backup-transfer' );
+			if ( transfer ) {
+				e.target.disabled = true;
+				transferPanel( transfer, $( '.wpmig-backup-transfer', quick ) );
+				return;
 			}
+			if ( ! choice ) {
+				return;
+			}
+			var full = choice.getAttribute( 'data-quick' ) === 'full';
+			quick.querySelectorAll( '[data-quick]' ).forEach( function ( b ) {
+				b.disabled = true;
+			} );
+			backupDb( $( '#wpmig-quick-box', quick ), full ? '' : 'base-de-donnees', { dbOnly: ! full, transfer: true } ).catch( function () {} ).then( function () {
+				quick.querySelectorAll( '[data-quick]' ).forEach( function ( b ) {
+					b.disabled = false;
+				} );
+			} );
+		} );
+	}
+
+	/* Events. */
+	if ( wizard ) {
+		document.getElementById( 'wpmig-new' ).addEventListener( 'click', function () {
+			form.reset();
+			form.elements.password.value = generatePassword();
+			toggleFilesOptions();
 			showStep( 1 );
-		} else if ( action === 'build' ) {
-			e.target.disabled = true;
-			showStep( 3 );
-			var panel = wizard.querySelector( '.wpmig-panel[data-step="3"]' );
+			wizard.scrollIntoView( { behavior: 'smooth' } );
+		} );
+
+		form.addEventListener( 'change', function ( e ) {
+			if ( e.target.name === 'db_only' ) {
+				toggleFilesOptions();
+			}
+		} );
+
+		form.addEventListener( 'submit', function ( e ) {
+			e.preventDefault();
+			showStep( 2 );
+			var panel = wizard.querySelector( '.wpmig-panel[data-step="2"]' );
 			$( '.wpmig-progress', panel ).hidden = false;
-			$( '.wpmig-result', panel ).innerHTML = '';
-			progress( panel, { progress: 0, message: 'Démarrage…' } );
-			post( 'wpmig_build', { id: current.id } ).then( loop ).catch( function ( err ) {
+			$( '.wpmig-actions', panel ).hidden = true;
+			$( '.wpmig-report', panel ).innerHTML = '';
+			progress( panel, { progress: 0, message: 'Démarrage de l\'analyse…' } );
+			var options = collectOptions();
+			password = options.password || '';
+			if ( ! password && ! window.confirm( 'Créer un installeur sans mot de passe ? C\'est déconseillé : toute personne trouvant installer.php en ligne pourrait l\'utiliser.' ) ) {
+				showStep( 1 );
+				return;
+			}
+			post( 'wpmig_create', { options: JSON.stringify( options ) } ).then( loop ).catch( function ( err ) {
 				error( err.message );
 			} );
-		}
-	} );
+		} );
+
+		wizard.addEventListener( 'click', function ( e ) {
+			var action = e.target.getAttribute( 'data-action' );
+			if ( ! action ) {
+				return;
+			}
+			if ( action === 'genpass' ) {
+				form.elements.password.value = generatePassword();
+			} else if ( action === 'cancel' ) {
+				wizard.hidden = true;
+			} else if ( action === 'discard' ) {
+				if ( current ) {
+					post( 'wpmig_delete', { id: current.id } );
+				}
+				showStep( 1 );
+			} else if ( action === 'build' ) {
+				e.target.disabled = true;
+				showStep( 3 );
+				var panel = wizard.querySelector( '.wpmig-panel[data-step="3"]' );
+				$( '.wpmig-progress', panel ).hidden = false;
+				$( '.wpmig-result', panel ).innerHTML = '';
+				progress( panel, { progress: 0, message: 'Démarrage…' } );
+				post( 'wpmig_build', { id: current.id } ).then( loop ).catch( function ( err ) {
+					error( err.message );
+				} );
+			}
+		} );
+	}
 
 	/* Import from another site. */
 	var importForm = document.getElementById( 'wpmig-import-form' );
@@ -429,7 +472,7 @@
 		} );
 	}
 
-	/* Package list actions. */
+	/* Backup list actions. */
 	var list = document.querySelector( '.wpmig-packages' );
 	if ( list ) {
 		list.addEventListener( 'click', function ( e ) {
@@ -466,7 +509,7 @@
 				return;
 			}
 			if ( target.getAttribute( 'data-delete' ) ) {
-				if ( ! window.confirm( 'Supprimer définitivement ce package ?' ) ) {
+				if ( ! window.confirm( 'Supprimer définitivement cette sauvegarde ?' ) ) {
 					return;
 				}
 				target.disabled = true;
@@ -502,7 +545,7 @@
 				post( 'wpmig_sync_link', { hours: $( '#wpmig-sync-hours' ).value } ).then( function ( link ) {
 					target.disabled = false;
 					var html = '<div class="wpmig-transfer"><h3>Lien de synchronisation</h3>';
-					html += '<p>Valable jusqu\'au ' + esc( link.expires_h ) + '. Collez-le sur la copie de travail : <strong>WP Migration → Synchroniser le contenu</strong>. Il ne sera plus affiché : copiez-le maintenant (un nouveau lien remplace le précédent).</p>';
+					html += '<p>Valable jusqu\'au ' + esc( link.expires_h ) + '. Collez-le sur la copie de travail : <strong>WP Migration → Synchronisation</strong>. Il ne sera plus affiché : copiez-le maintenant (un nouveau lien remplace le précédent).</p>';
 					html += '<div class="wpmig-copy"><input type="text" class="large-text code" readonly value="' + esc( link.url ) + '"><button type="button" class="button" data-copy="1">Copier</button></div>';
 					if ( link.insecure ) {
 						html += '<p class="wpmig-warning-text">Ce site n\'est pas en HTTPS : les données transiteront en clair.</p>';
@@ -626,7 +669,7 @@
 			var help = $( '#wpmig-sync-since-help' );
 			var select = $( '#wpmig-sync-packages' );
 			post( 'wpmig_sync_probe', { link: this.value } ).then( function ( info ) {
-				select.innerHTML = '<option value="">Package utilisé pour la copie…</option>';
+				select.innerHTML = '<option value="">Sauvegarde utilisée pour la copie…</option>';
 				info.packages.forEach( function ( p ) {
 					select.insertAdjacentHTML( 'beforeend', '<option value="' + esc( p.value ) + '">' + esc( p.label ) + '</option>' );
 				} );
@@ -635,7 +678,7 @@
 					$( '#wpmig-sync-since' ).value = info.default;
 					help.textContent = 'Date trouvée automatiquement (' + info.default_h + ').';
 				} else {
-					help.textContent = 'Indiquez quand ce site a été copié depuis ' + info.source + ', ou choisissez le package utilisé.';
+					help.textContent = 'Indiquez quand ce site a été copié depuis ' + info.source + ', ou choisissez la sauvegarde utilisée.';
 				}
 			} ).catch( function ( err ) {
 				help.textContent = err.message;
@@ -851,6 +894,14 @@
 
 		search.addEventListener( 'click', function ( e ) {
 			var target = e.target;
+			var suggest = target.getAttribute( 'data-search-suggest' );
+			if ( suggest ) {
+				var pair = suggest.split( '|' );
+				$( '#wpmig-search-text' ).value = pair[ 0 ];
+				$( '#wpmig-search-replace' ).value = pair[ 1 ] || '';
+				$( '#wpmig-search-replace' ).focus();
+				return;
+			}
 			var undoId = target.getAttribute( 'data-search-undo' );
 			var action = undoId ? 'undo' : target.getAttribute( 'data-search' );
 			if ( ! action ) {

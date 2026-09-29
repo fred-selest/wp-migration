@@ -79,7 +79,7 @@ class WPMIG_Report {
 				$label  = 'Absente de la destination';
 			} elseif ( null === $exported ) {
 				$status = 'unknown';
-				$label  = 'Non comparée (package d\'une version antérieure)';
+				$label  = 'Non comparée (sauvegarde d\'une version antérieure)';
 			} elseif ( (int) $exported !== (int) $imported ) {
 				$status = 'diff';
 				$label  = sprintf( 'Écart de %+d ligne(s)', (int) $imported - (int) $exported );
@@ -202,7 +202,7 @@ class WPMIG_Report {
 			array( 'Durée de l\'installation', self::duration( $report['finished'] - $report['started'] ) ),
 			array( 'Mode', 'cli' === $report['mode'] ? 'Ligne de commande (SSH)' : 'Navigateur' ),
 			array(
-				'Package',
+				'Sauvegarde',
 				( isset( $p['name'] ) ? $p['name'] : '' ) . ( isset( $p['id'] ) ? ' (' . $p['id'] . ')' : '' )
 				. ( ! empty( $p['created'] ) ? ', créé le ' . wpmig_date( strtotime( $p['created'] . ' UTC' ) ) : '' )
 				. ( ! empty( $p['archive_size'] ) ? ', archive de ' . wpmig_size( $p['archive_size'] ) : '' ),
@@ -300,7 +300,7 @@ class WPMIG_Report {
 			}
 		}
 		if ( $report['excluded'] ) {
-			$title( 'Exclus du package par le site d\'origine' );
+			$title( 'Exclus de la sauvegarde par le site d\'origine' );
 			foreach ( $report['excluded'] as $item ) {
 				$lines[] = '- ' . $item;
 			}

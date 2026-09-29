@@ -400,7 +400,7 @@ class WPMIG_Sync {
 				foreach ( isset( $info['packages'] ) ? $info['packages'] : array() as $p ) {
 					$list[] = sprintf( '« %s » : %s', $p['name'], get_date_from_gmt( $p['start'], 'Y-m-d H:i' ) );
 				}
-				throw new WPMIG_Exception( 'Précisez la date de la copie (quand ce site a été copié depuis le site d\'origine) : aucun rapport de migration ni synchronisation précédente ne l\'indique.' . ( $list ? ' Packages du site d\'origine : ' . implode( ' ; ', $list ) . '.' : '' ) );
+				throw new WPMIG_Exception( 'Précisez la date de la copie (quand ce site a été copié depuis le site d\'origine) : aucun rapport de migration ni synchronisation précédente ne l\'indique.' . ( $list ? ' Sauvegardes du site d\'origine : ' . implode( ' ; ', $list ) . '.' : '' ) );
 			}
 		} elseif ( preg_match( '/^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})(:\d{2})?$/', $threshold, $m ) ) {
 			// Local time of this site → GMT.
