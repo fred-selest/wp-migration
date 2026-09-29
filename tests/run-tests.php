@@ -304,5 +304,21 @@ check( 'texte : table en écart', true, (bool) preg_match( '/^wp_posts\s+8\s+6  
 check( 'texte : colonnes alignées malgré les accents', true, (bool) preg_match( '/^\[OK\] Intégrité de l\'archive {4}Sommes/mu', $text ) );
 check( 'texte : exclusions et journal', true, false !== strpos( $text, 'debug.log' ) && false !== strpos( $text, "ligne 1\nligne 2" ) );
 
+echo "\nMises à jour\n";
+if ( ! function_exists( 'esc_html' ) ) {
+	function esc_html( $s ) {
+		return htmlspecialchars( (string) $s, ENT_QUOTES, 'UTF-8' );
+	}
+}
+require dirname( __DIR__ ) . '/includes/class-wpmig-updater.php';
+check(
+	'notes de version en HTML',
+	'<h5>Ajouté</h5><ul><li><strong>Rapport</strong> et <code>wp migration report</code></li><li>a &lt;b&gt;</li></ul><p>Fin.</p>',
+	WPMIG_Updater::markdown( "### Ajouté\n- **Rapport** et `wp migration report`\n- a <b>\n\nFin." )
+);
+check( 'liste en fin de texte fermée', '<ul><li>x</li></ul>', WPMIG_Updater::markdown( '* x' ) );
+$header = file_get_contents( dirname( __DIR__ ) . '/wp-migration.php' );
+check( 'en-tête Update URI', 1, preg_match( '/^ \* Update URI:\s+https:\/\/github\.com\/' . preg_quote( WPMIG_Updater::REPO, '/' ) . '$/m', $header ) );
+
 echo "\n" . ( $count - $failures ) . '/' . $count . " tests réussis\n";
 exit( $failures ? 1 : 0 );

@@ -20,6 +20,7 @@ class WPMIG_Plugin {
 	public static function init() {
 		WPMIG_Transfer::init();
 		WPMIG_Cleanup::init();
+		WPMIG_Updater::init();
 		if ( is_admin() && class_exists( 'WPMIG_Admin' ) ) {
 			WPMIG_Admin::init();
 		}
