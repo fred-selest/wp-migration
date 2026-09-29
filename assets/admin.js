@@ -298,6 +298,55 @@
 		$( '.wpmig-progress', panel ).hidden = true;
 	}
 
+	/* Backup of the database (a package without files), for the tools that change it. */
+	function backupDb( box, name ) {
+		var pass = generatePassword();
+		var failures = 0;
+		box.innerHTML = '<div class="wpmig-bar"><span style="width:3%"></span></div><p class="wpmig-msg">Sauvegarde de la base de données…</p>';
+		var show = function ( state ) {
+			$( 'span', box ).style.width = Math.max( 3, state.progress || 0 ) + '%';
+			$( '.wpmig-msg', box ).textContent = state.message || '';
+		};
+		var later = function ( action, id ) {
+			return new Promise( function ( resolve ) {
+				setTimeout( resolve, 200 );
+			} ).then( function () {
+				return post( action, { id: id } ).catch( function ( err ) {
+					if ( err.retry && failures++ < 5 ) {
+						return later( action, id );
+					}
+					throw err;
+				} );
+			} );
+		};
+		var run = function ( state ) {
+			failures = 0;
+			show( state );
+			if ( state.status === 'error' ) {
+				throw new Error( state.error );
+			}
+			if ( state.status === 'scanned' ) {
+				return later( 'wpmig_build', state.id ).then( run );
+			}
+			if ( state.status === 'complete' ) {
+				return state;
+			}
+			return later( 'wpmig_step', state.id ).then( run );
+		};
+		// A backup keeps everything: nothing is skipped.
+		var options = { name: name, db_only: true, skip_transients: false, skip_spam: false, skip_revisions: false, password: pass };
+		return post( 'wpmig_create', { options: JSON.stringify( options ) } ).then( run ).then( function ( state ) {
+			var html = '<div class="notice notice-success inline"><p><strong>Sauvegarde prête</strong> (' + esc( state.sizes.archive_h || '' ) + '). Téléchargez les deux fichiers et gardez-les avec le mot de passe : ils permettent de rétablir la base avec l\'installeur. Elle figure aussi dans la liste des packages.</p></div>';
+			html += '<p class="wpmig-downloads"><a class="button" href="' + esc( downloadUrl( state.id, 'archive' ) ) + '">Archive (' + esc( state.sizes.archive_h || '' ) + ')</a> <a class="button" href="' + esc( downloadUrl( state.id, 'installer' ) ) + '">installer.php</a></p>';
+			html += '<p>Mot de passe de l\'installeur : <code class="wpmig-password">' + esc( pass ) + '</code> — notez-le, il ne sera plus affiché.</p>';
+			box.innerHTML = html;
+			return state;
+		} ).catch( function ( err ) {
+			box.innerHTML = '<div class="notice notice-error inline"><p>Sauvegarde impossible : ' + esc( err.message ) + '</p></div>';
+			throw err;
+		} );
+	}
+
 	/* Events. */
 	document.getElementById( 'wpmig-new' ).addEventListener( 'click', function () {
 		form.reset();
@@ -536,9 +585,9 @@
 				html += '<p class="wpmig-msg">' + esc( state.message ) + '</p>';
 			} else if ( state.status === 'ready' ) {
 				html += '<h3>Analyse</h3>' + countsTable( state ) + notesList( state );
-				html += '<p>' + ( state.lines ? '<button type="button" class="button button-primary" data-sync="confirm">Importer ces contenus</button> ' : '' ) + '<button type="button" class="button" data-sync="dismiss">' + ( state.lines ? 'Abandonner' : 'Fermer' ) + '</button></p>';
+				html += '<p>' + ( state.lines ? '<button type="button" class="button button-primary" data-sync="confirm">Importer ces contenus</button> <button type="button" class="button" data-sync="backup">Sauvegarder la base de données</button> ' : '' ) + '<button type="button" class="button" data-sync="dismiss">' + ( state.lines ? 'Abandonner' : 'Fermer' ) + '</button></p>';
 				if ( state.lines ) {
-					html += '<p class="description">Conseil : faites d\'abord une sauvegarde de ce site (un package). La synchronisation peut aussi être annulée juste après.</p>';
+					html += '<div id="wpmig-sync-backup"></div><p class="description">Conseil : sauvegardez d\'abord la base de données. La synchronisation peut aussi être annulée juste après.</p>';
 				}
 			} else if ( state.status === 'done' ) {
 				html += '<div class="notice notice-success inline"><p><strong>Synchronisation terminée.</strong> ' + ( state.files && state.files.total ? esc( state.files.downloaded + ' fichier(s) de médias téléchargé(s).' ) : '' ) + '</p></div>';
@@ -628,6 +677,14 @@
 			if ( action === 'confirm' && ! window.confirm( 'Importer ces contenus sur ce site ?' ) ) {
 				return;
 			}
+			if ( action === 'backup' ) {
+				var backupButton = e.target;
+				backupButton.disabled = true;
+				backupDb( $( '#wpmig-sync-backup', sync ), 'avant-synchronisation' ).catch( function () {} ).then( function () {
+					backupButton.disabled = false;
+				} );
+				return;
+			}
 			e.target.disabled = true;
 			if ( action === 'dismiss' ) {
 				post( 'wpmig_sync_dismiss' ).then( function () {
@@ -703,9 +760,9 @@
 				if ( state.skipped.length ) {
 					html += '<p class="description">Tables ignorées : ' + esc( state.skipped.join( ', ' ) ) + '.</p>';
 				}
-				html += '<p>' + ( state.totals.changed ? '<button type="button" class="button button-primary" data-search="confirm">Remplacer</button> ' : '' ) + '<button type="button" class="button" data-search="dismiss">' + ( state.totals.changed ? 'Abandonner' : 'Fermer' ) + '</button></p>';
+				html += '<p>' + ( state.totals.changed ? '<button type="button" class="button button-primary" data-search="confirm">Remplacer</button> <button type="button" class="button" data-search="backup">Sauvegarder la base de données</button> ' : '' ) + '<button type="button" class="button" data-search="dismiss">' + ( state.totals.changed ? 'Abandonner' : 'Fermer' ) + '</button></p>';
 				if ( state.totals.changed ) {
-					html += '<p class="description">Conseil : faites d\'abord une sauvegarde de ce site (un package). Le remplacement peut aussi être annulé juste après.</p>';
+					html += '<div id="wpmig-search-backup"></div><p class="description">Conseil : sauvegardez d\'abord la base de données. Le remplacement peut aussi être annulé juste après.</p>';
 				}
 			} else if ( state.status === 'done' ) {
 				html += '<div class="notice notice-success inline"><p><strong>Remplacement terminé.</strong> ' + searchSummary( state, true ) + '</p></div>' + searchResults( state );
@@ -803,6 +860,13 @@
 				return;
 			}
 			if ( action === 'confirm' && ! window.confirm( 'Remplacer maintenant dans la base de données de ce site ?' ) ) {
+				return;
+			}
+			if ( action === 'backup' ) {
+				target.disabled = true;
+				backupDb( $( '#wpmig-search-backup', search ), 'avant-remplacement' ).catch( function () {} ).then( function () {
+					target.disabled = false;
+				} );
 				return;
 			}
 			target.disabled = true;

@@ -52,6 +52,8 @@ WordPress n'a **pas** besoin d'être installé sur la destination. S'il l'est d�
 |---|---|
 | ![Rechercher et remplacer](docs/screenshots/20-rechercher-remplacer-formulaire.png) | ![Analyse du remplacement](docs/screenshots/21-rechercher-remplacer-analyse.png) |
 
+![Sauvegarde de la base de données avant le remplacement](docs/screenshots/22-rechercher-remplacer-sauvegarde.png)
+
 ### Nettoyage automatique des anciens packages
 
 ![Nettoyage automatique](docs/screenshots/14-nettoyage-automatique.png)
@@ -156,7 +158,7 @@ Scénario type : le site est copié sur un serveur de développement ou de prép
 
 1. **Sur le site d'origine** (WP Migration 1.5.0 ou plus récent) : **WP Migration → Autoriser la synchronisation → Créer un lien** (valable 24 h, 3 ou 7 jours, révocable). Ce site est seulement lu.
 2. **Sur la copie** : **WP Migration → Synchroniser le contenu**, coller le lien, choisir les contenus, puis **Analyser**. La date de la copie est trouvée automatiquement (rapport de migration, synchronisation précédente) ou choisie parmi les packages du site d'origine.
-3. Vérifier l'analyse (ajouts, mises à jour, contenus conservés, points à connaître), puis **Importer ces contenus**. Rien n'est modifié avant cette confirmation, et la dernière synchronisation peut être **annulée**.
+3. Vérifier l'analyse (ajouts, mises à jour, contenus conservés, points à connaître), éventuellement **Sauvegarder la base de données** (package de la base seule), puis **Importer ces contenus**. Rien n'est modifié avant cette confirmation, et la dernière synchronisation peut être **annulée**.
 4. Recommencer autant que nécessaire : seules les nouveautés sont reprises. Faire une dernière synchronisation juste avant la mise en ligne, idéalement avec la boutique d'origine en maintenance pour ne perdre aucune commande entre les deux.
 
 En SSH : `wp migration sync-link` sur le site d'origine, puis `wp migration sync '<lien>' --dry-run`, `wp migration sync '<lien>' --yes`, `wp migration sync-undo` sur la copie (options `--types=orders,customers,products,coupons,posts,media,comments`, `--since="AAAA-MM-JJ HH:MM"`, `--force`).
@@ -189,7 +191,8 @@ Après une migration (ou à tout moment), pour changer une adresse oubliée, un 
    - **Expression régulière** : `/motif/i`, avec `$1`, `$2`… pour les groupes capturés (ajouter `u` pour les caractères accentués).
 2. Options : ignorer la casse, ne traiter qu'une partie des tables, modifier aussi les `guid` des articles (déconseillé : ce ne sont pas des liens, les lecteurs RSS s'en servent pour reconnaître les articles déjà lus).
 3. **Analyser** : rien n'est modifié. Le résultat donne, par table, le nombre de lignes et d'occurrences ainsi que des exemples avant / après (la partie modifiée est surlignée).
-4. **Remplacer** après vérification, puis vider les caches (extension de cache, CSS générés par le constructeur de pages).
+4. **Sauvegarder la base de données** (bouton à côté de « Remplacer ») : un package de la base seule, sans rien exclure, à télécharger avec son installeur et son mot de passe (affiché une seule fois) ; en SSH : `wp migration build --db-only`.
+5. **Remplacer** après vérification, puis vider les caches (extension de cache, CSS générés par le constructeur de pages).
 
 **Annulation** : la valeur d'origine de chaque colonne modifiée est enregistrée avant le changement ; « Annuler ce remplacement » (ou depuis l'historique des 10 derniers) la remet, sauf si elle a été modifiée depuis (elle est alors laissée telle quelle et comptée). Les journaux des 5 derniers remplacements sont conservés dans le dossier de stockage.
 
