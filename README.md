@@ -61,7 +61,21 @@ Non pris en charge : WordPress **multisite** (refusé explicitement plutôt que 
 
 ## Installation
 
-Copier le dossier dans `wp-content/plugins/wp-migration` (ou installer le zip créé avec `bin/make-zip.sh`), puis activer l'extension. Le menu **WP Migration** apparaît dans l'administration.
+Télécharger `wp-migration-x.y.z.zip` depuis la [dernière release](https://github.com/fred-selest/wp-migration/releases/latest), puis **Extensions → Ajouter → Téléverser une extension** et activer. Le menu **WP Migration** apparaît dans l'administration.
+
+### Mises à jour
+
+Depuis la version 1.4.0, WordPress détecte les nouvelles versions publiées sur GitHub comme pour une extension de wordpress.org :
+
+- avis « Une nouvelle version est disponible » dans **Extensions** et **Tableau de bord → Mises à jour**, avec le journal des modifications dans « Afficher les détails » ;
+- mise à jour en un clic, avec WP-CLI (`wp plugin update wp-migration`) ou **automatique** (lien « Activer les mises à jour auto ») ;
+- lien **Vérifier les mises à jour** sous l'extension pour interroger GitHub immédiatement (sinon, toutes les 12 heures).
+
+![Mise à jour disponible](docs/screenshots/16-mise-a-jour.png)
+
+L'en-tête `Update URI` empêche WordPress de chercher l'extension sur wordpress.org, où une autre extension (fermée) utilise le même identifiant `wp-migration`. Les exigences de la nouvelle version (WordPress, PHP) sont lues dans son `readme.txt` : une mise à jour incompatible avec le serveur est signalée comme telle. Si l'extension a été installée dans un dossier au nom différent (par exemple `wp-migration-main`), il est conservé lors de la mise à jour.
+
+Pour une installation en 1.3.0 ou antérieure, la mise à jour vers la 1.4.0 se fait une dernière fois manuellement : téléverser le zip et choisir « Remplacer la version installée ».
 
 ## Migrer un site
 
@@ -199,9 +213,11 @@ Format d'archive `.wpmig` : suite d'entrées `WMF1` (type, chemin, date, permiss
 
 1. Mettre à jour le numéro de version dans `wp-migration.php` (`Version`, `WPMIG_VERSION`), `readme.txt` (`Stable tag`) et l'installeur (`WPMIG_INSTALLER` dans `installer/installer.php.tpl`).
 2. Ajouter une section `## [x.y.z]` dans `CHANGELOG.md`.
-3. Pousser un tag : `git tag vx.y.z && git push origin vx.y.z`.
+3. Pousser un tag : `git tag vx.y.z && git push origin vx.y.z` (ou lancer le workflow « Release » avec l'option de publication).
 
 Le workflow `.github/workflows/release.yml` vérifie la cohérence des versions, lance les tests, construit `wp-migration-x.y.z.zip` et publie la release GitHub avec les notes du changelog. En local : `bin/make-zip.sh`.
+
+Les sites équipés de l'extension détectent la release dans les 12 heures : le zip joint `wp-migration-x.y.z.zip` (nom à conserver) est le paquet de mise à jour, et les notes de la release forment le journal affiché dans WordPress. Une release marquée « pre-release » ou brouillon n'est jamais proposée.
 
 ## Licence
 

@@ -3,6 +3,14 @@
 Toutes les évolutions notables de WP Migration sont consignées ici.
 Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le projet respecte le [versionnage sémantique](https://semver.org/lang/fr/).
 
+## [1.4.0] - 2026-09-29
+
+### Ajouté
+- **Mises à jour depuis GitHub** : WordPress détecte les nouvelles releases (avis dans Extensions et Tableau de bord → Mises à jour, journal des modifications dans « Afficher les détails »), mise à jour en un clic, avec WP-CLI ou automatique ; lien « Vérifier les mises à jour » sous l'extension. Les exigences de WordPress et de PHP de la nouvelle version sont respectées ; les pré-versions et brouillons ne sont jamais proposés.
+
+### Sécurité
+- En-tête `Update URI` : WordPress ne cherche plus l'extension sur wordpress.org, où une extension sans rapport (fermée) utilise le même identifiant `wp-migration`.
+
 ## [1.3.0] - 2026-09-28
 
 ### Ajouté
@@ -57,6 +65,7 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le pr
 - Protection de l'installeur par mot de passe.
 - Compatibilité WordPress 4.9 à 7.1 et PHP 5.6 à 8.4.
 
+[1.4.0]: https://github.com/fred-selest/wp-migration/releases/tag/v1.4.0
 [1.3.0]: https://github.com/fred-selest/wp-migration/releases/tag/v1.3.0
 [1.2.0]: https://github.com/fred-selest/wp-migration/releases/tag/v1.2.0
 [1.1.0]: https://github.com/fred-selest/wp-migration/releases/tag/v1.1.0

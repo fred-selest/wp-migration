@@ -13,7 +13,7 @@
  * @package WPMigration
  */
 
-define( 'WPMIG_INSTALLER', '1.3.0' );
+define( 'WPMIG_INSTALLER', '1.4.0' );
 
 @ini_set( 'display_errors', '0' ); // phpcs:ignore
 error_reporting( E_ALL & ~E_DEPRECATED & ~E_NOTICE & ~E_WARNING );
