@@ -9,6 +9,7 @@
 .wpmig .wpmig-bar span{display:block;height:100%;width:0;background:#2271b1;transition:width .4s}
 .wpmig .wpmig-msg{color:#50575e}
 .wpmig .wpmig-badge{display:inline-block;min-width:60px;text-align:center;padding:0 8px;border-radius:10px;color:#fff;font-size:12px;font-weight:600}
+.wpmig .wpmig-info{background:#2271b1}
 .wpmig .wpmig-ok{background:#00a32a}.wpmig .wpmig-warning{background:#dba617}.wpmig .wpmig-error{background:#d63638}
 .wpmig .wpmig-checks th{width:30%}
 .wpmig .wpmig-warning-text,.wpmig .wpmig-status-error{color:#b32d2e}

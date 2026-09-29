@@ -13,7 +13,7 @@
  * @package WPMigration
  */
 
-define( 'WPMIG_INSTALLER', '1.7.0' );
+define( 'WPMIG_INSTALLER', '1.8.0' );
 
 @ini_set( 'display_errors', '0' ); // phpcs:ignore
 error_reporting( E_ALL & ~E_DEPRECATED & ~E_NOTICE & ~E_WARNING );
@@ -2028,9 +2028,46 @@ class WPMIG_Installer {
 
 		// The report is kept in the database: it survives the removal of the installation files.
 		$report                           = $this->build_report();
-		$this->state['result']['checks'] = $report['checks'];
+		$this->state['result']['checks']      = $report['checks'];
+		$this->state['result']['consistency'] = $report['consistency'];
 		$this->state['result']['report'] = $p['url_site'] . '/wp-admin/admin.php?page=wp-migration&view=report';
 		$this->save_report( $report );
+	}
+
+	/**
+	 * Consistency checks of the new site (menus, permalinks, WPML / Polylang).
+	 * They never fail the installation: a problem here is only reported.
+	 *
+	 * @return array Findings, see WPMIG_Consistency::evaluate().
+	 */
+	private function consistency() {
+		try {
+			$p  = $this->state['params'];
+			$m  = $this->manifest();
+			$db = $this->connect( $p );
+			$db->set_charset( 'utf8mb4' ) || $db->set_charset( 'utf8' );
+			$query  = function ( $sql ) use ( $db ) {
+				$res  = $db->query( $sql );
+				$rows = array();
+				if ( $res && is_object( $res ) ) {
+					while ( $row = $res->fetch_assoc() ) {
+						$rows[] = $row;
+					}
+					$res->free();
+				}
+				return $rows;
+			};
+			$escape = function ( $value ) use ( $db ) {
+				return $db->real_escape_string( $value );
+			};
+			$source = isset( $m['multilingual'] ) && is_array( $m['multilingual'] ) ? $m['multilingual'] : array();
+			$data   = WPMIG_Consistency::collect( $p['db_prefix'], $query, $escape, $m['site']['home'], $p['url_home'], $source );
+			$db->close();
+			return WPMIG_Consistency::evaluate( $data );
+		} catch ( Exception $e ) {
+			$this->log( 'Contrôles de cohérence ignorés : ' . $e->getMessage() );
+			return array();
+		}
 	}
 
 	/**
@@ -2134,6 +2171,8 @@ class WPMIG_Installer {
 				'sql_errors'     => (int) $db['errors'],
 				'broken'         => (int) $db['broken'],
 			),
+			'consistency'  => $this->consistency(),
+			'multilingual_source' => isset( $m['multilingual'] ) && is_array( $m['multilingual'] ) ? $m['multilingual'] : null,
 			'tables'       => $check['tables'],
 			'replacements' => $replacements,
 			'excluded'     => isset( $m['excluded'] ) ? $m['excluded'] : array(),
@@ -2141,6 +2180,28 @@ class WPMIG_Installer {
 			'notices'      => array_values( array_unique( $this->state['notices'] ) ),
 			'log'          => '',
 		);
+	}
+
+	/**
+	 * Consistency findings as text lines (CLI).
+	 *
+	 * @param array $items Findings.
+	 * @return array
+	 */
+	private static function consistency_lines( array $items ) {
+		$counts = WPMIG_Consistency::counts( $items );
+		if ( ! $items ) {
+			return array();
+		}
+		$lines   = array( 'COHÉRENCE : ' . ( $counts['warning'] ? $counts['warning'] . ' point(s) à vérifier' : 'rien à signaler' ) . ( $counts['info'] ? ', ' . $counts['info'] . ' information(s)' : '' ) . '.' );
+		$symbols = array( 'ok' => '✔', 'warning' => '!', 'info' => 'i' );
+		foreach ( $items as $item ) {
+			$lines[] = '  ' . $symbols[ $item['status'] ] . ' ' . $item['label'] . ' : ' . $item['message'];
+			foreach ( $item['details'] as $detail ) {
+				$lines[] = '      - ' . $detail;
+			}
+		}
+		return $lines;
 	}
 
 	/**
@@ -2983,6 +3044,9 @@ class WPMIG_Installer {
 					foreach ( self::checks_lines( $this->state['result']['checks'] ) as $line ) {
 						$out( $line );
 					}
+					foreach ( self::consistency_lines( isset( $this->state['result']['consistency'] ) ? $this->state['result']['consistency'] : array() ) as $line ) {
+						$out( $line );
+					}
 					$out( 'Rapport complet : ' . $this->state['result']['report'] );
 				}
 			}
@@ -3382,10 +3446,22 @@ table.checks td{padding:3px 0}
 			checks = (c.ok ? msg('ok', 'Contrôles réussis : la copie est complète.') : msg('warning', c.issues.join(' '))) + checks +
 				'<p class="hint">Ce rapport, avec le journal complet, reste consultable après la suppression des fichiers d\'installation : <strong>WP Migration → Rapport de migration</strong> dans l\'administration du site.</p>';
 		}
+		var consistency = '';
+		if (res.consistency && res.consistency.length) {
+			var sym = { ok: '✔', warning: '⚠', info: 'ℹ' }, bad = 0;
+			consistency = '<table class="checks">';
+			res.consistency.forEach(function (it) {
+				if (it.status === 'warning') { bad++; }
+				consistency += '<tr><th>' + esc(it.label) + '</th><td>' + sym[it.status] + ' ' + esc(it.message);
+				if (it.details && it.details.length) { consistency += '<ul class="list">' + it.details.map(function (d) { return '<li>' + esc(d) + '</li>'; }).join('') + '</ul>'; }
+				consistency += '</td></tr>';
+			});
+			consistency = '<h3>Cohérence du site</h3>' + (bad ? msg('warning', bad + ' point(s) à vérifier sur le nouveau site.') : '') + consistency + '</table>';
+		}
 		app.innerHTML = '<div class="card"><h2>✅ Installation terminée</h2>' +
 			'<p class="big">Le site est disponible à l\'adresse <a href="' + esc(res.home) + '" target="_blank" rel="noopener">' + esc(res.home) + '</a></p>' +
 			'<p>Connectez-vous avec les identifiants du site d\'origine (ou le compte administrateur défini à l\'étape précédente).</p>' +
-			checks + warns + (list ? '<details><summary>Détails</summary><ul class="list">' + list + '</ul></details>' : '') +
+			checks + consistency + warns + (list ? '<details><summary>Détails</summary><ul class="list">' + list + '</ul></details>' : '') +
 			'</div><div class="card"><h2>Sécurité : supprimez les fichiers d\'installation</h2>' +
 			'<p>L\'installeur, l\'archive et le dossier de travail contiennent une copie complète du site et de la base de données. Supprimez-les dès que vous avez vérifié le site.</p>' +
 			'<div id="cleanmsg"></div><div class="actions"><a class="button" href="' + esc(res.home) + '" target="_blank" rel="noopener">Voir le site</a>' +

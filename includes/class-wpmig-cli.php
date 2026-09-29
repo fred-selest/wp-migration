@@ -442,6 +442,53 @@ class WPMIG_CLI {
 	}
 
 	/**
+	 * Consistency checks of this site: menu locations, permalinks, WPML / Polylang (translation links, default language, language domains).
+	 *
+	 * Nothing is changed. When this site was created by a migration, the figures of the
+	 * source site are used for the comparison, and --save keeps the result in the migration report.
+	 *
+	 * ## OPTIONS
+	 *
+	 * [--format=<format>]
+	 * : table or json.
+	 * ---
+	 * default: table
+	 * ---
+	 *
+	 * [--save]
+	 * : Keep the result in the migration report.
+	 *
+	 * @param array $args       Arguments.
+	 * @param array $assoc_args Options.
+	 */
+	public function check( $args, $assoc_args ) {
+		$items = isset( $assoc_args['save'] ) ? WPMIG_Report::recheck() : null;
+		if ( null === $items ) {
+			$items = WPMIG_Report::consistency_now();
+		}
+		if ( 'json' === ( isset( $assoc_args['format'] ) ? $assoc_args['format'] : 'table' ) ) {
+			WP_CLI::print_value( $items, array( 'format' => 'json' ) );
+			return;
+		}
+		$symbols = array(
+			'ok'      => '[OK]',
+			'warning' => '[!!]',
+			'info'    => '[i] ',
+		);
+		foreach ( $items as $item ) {
+			WP_CLI::log( sprintf( '%s %-26s %s', $symbols[ $item['status'] ], $item['label'], $item['message'] ) );
+			foreach ( $item['details'] as $detail ) {
+				WP_CLI::log( '       - ' . $detail );
+			}
+		}
+		$counts = WPMIG_Consistency::counts( $items );
+		if ( $counts['warning'] ) {
+			WP_CLI::halt( 1 );
+		}
+		WP_CLI::success( $items ? 'Rien à signaler.' : 'Aucun contrôle applicable à ce site.' );
+	}
+
+	/**
 	 * Search and replace in the database, serialization-safe, with an analysis first and an undo.
 	 *
 	 * Works in every text column of the site tables (posts, options, meta, orders...),

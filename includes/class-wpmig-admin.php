@@ -38,6 +38,7 @@ class WPMIG_Admin {
 		add_action( 'admin_post_wpmig_cleanup_settings', array( __CLASS__, 'cleanup_settings' ) );
 		add_action( 'admin_post_wpmig_report_download', array( __CLASS__, 'report_download' ) );
 		add_action( 'admin_post_wpmig_report_delete', array( __CLASS__, 'report_delete' ) );
+		add_action( 'admin_post_wpmig_report_recheck', array( __CLASS__, 'report_recheck' ) );
 		add_action( 'admin_init', array( __CLASS__, 'post_install' ) );
 		add_action( 'admin_notices', array( __CLASS__, 'notices' ) );
 		add_filter( 'plugin_action_links_' . plugin_basename( WPMIG_FILE ), array( __CLASS__, 'action_links' ) );
@@ -534,6 +535,18 @@ class WPMIG_Admin {
 	}
 
 	/**
+	 * Run the consistency checks again.
+	 */
+	public static function report_recheck() {
+		if ( ! current_user_can( self::CAP ) || ! isset( $_GET['_wpnonce'] ) || ! wp_verify_nonce( sanitize_text_field( wp_unslash( $_GET['_wpnonce'] ) ), 'wpmig_report_recheck' ) ) {
+			wp_die( 'Accès refusé.', 403 );
+		}
+		WPMIG_Report::recheck();
+		wp_safe_redirect( self::report_url() . '&rechecked=1#wpmig-consistency' );
+		exit;
+	}
+
+	/**
 	 * URL of the report page.
 	 *
 	 * @return string
@@ -996,7 +1009,14 @@ class WPMIG_Admin {
 		$c = $report['checks'];
 		?>
 		<div class="wpmig-card wpmig-report-card">
-			<h2>Rapport de migration <?php echo self::badge( ! empty( $c['ok'] ), ! empty( $c['ok'] ) ? 'Copie complète' : count( $c['issues'] ) . ' point(s) à vérifier' ); // phpcs:ignore WordPress.Security.EscapeOutput ?></h2>
+			<h2>Rapport de migration <?php echo self::badge( ! empty( $c['ok'] ), ! empty( $c['ok'] ) ? 'Copie complète' : count( $c['issues'] ) . ' point(s) à vérifier' ); // phpcs:ignore WordPress.Security.EscapeOutput ?>
+				<?php
+				$warn = WPMIG_Consistency::counts( $report['consistency'] );
+				if ( $warn['warning'] ) {
+					echo ' <a href="' . esc_url( self::report_url() . '#wpmig-consistency' ) . '">' . self::badge( false, $warn['warning'] . ' point(s) de cohérence' ) . '</a>'; // phpcs:ignore WordPress.Security.EscapeOutput
+				}
+				?>
+			</h2>
 			<p>
 				<?php
 				echo esc_html(
@@ -1014,6 +1034,56 @@ class WPMIG_Admin {
 			</p>
 			<p><a class="button button-primary" href="<?php echo esc_url( self::report_url() ); ?>">Voir le rapport complet</a>
 			<a class="button" href="<?php echo esc_url( wp_nonce_url( admin_url( 'admin-post.php?action=wpmig_report_download' ), 'wpmig_report_download' ) ); ?>">Télécharger (.txt)</a></p>
+		</div>
+		<?php
+	}
+
+	/**
+	 * Consistency checks of the new site.
+	 *
+	 * @param array $report Report.
+	 */
+	private static function render_consistency( array $report ) {
+		$items  = $report['consistency'];
+		$counts = WPMIG_Consistency::counts( $items );
+		$badges = array(
+			'ok'      => array( 'wpmig-ok', 'OK' ),
+			'warning' => array( 'wpmig-warning', 'À vérifier' ),
+			'info'    => array( 'wpmig-info', 'Info' ),
+		);
+		?>
+		<div class="wpmig-card" id="wpmig-consistency">
+			<h2>Cohérence du site
+				<?php echo $counts['warning'] ? self::badge( false, $counts['warning'] . ' point(s) à vérifier' ) : ( $items ? self::badge( true, 'Rien à signaler' ) : '' ); // phpcs:ignore WordPress.Security.EscapeOutput ?>
+			</h2>
+			<?php if ( isset( $_GET['rechecked'] ) ) : // phpcs:ignore WordPress.Security.NonceVerification ?>
+				<div class="notice notice-success inline"><p>Contrôles relancés.</p></div>
+			<?php endif; ?>
+			<p class="description">Contrôles réalisés après l'installation : emplacements de menu, permaliens et, avec WPML ou Polylang, liens de traduction, langue par défaut et domaines de langue. Ils ne modifient rien.</p>
+			<?php if ( $items ) : ?>
+				<table class="widefat striped wpmig-report-table"><tbody>
+				<?php foreach ( $items as $item ) : ?>
+					<tr>
+						<th scope="row"><?php echo esc_html( $item['label'] ); ?></th>
+						<td><?php echo esc_html( $item['message'] ); ?>
+						<?php if ( $item['details'] ) : ?>
+							<ul class="wpmig-warnings"><?php foreach ( $item['details'] as $detail ) : ?><li><?php echo esc_html( $detail ); ?></li><?php endforeach; ?></ul>
+						<?php endif; ?>
+						</td>
+						<td class="wpmig-report-badge"><span class="wpmig-badge <?php echo esc_attr( $badges[ $item['status'] ][0] ); ?>"><?php echo esc_html( $badges[ $item['status'] ][1] ); ?></span></td>
+					</tr>
+				<?php endforeach; ?>
+				</tbody></table>
+			<?php else : ?>
+				<p>Aucun contrôle enregistré : cette migration a été faite avec une version précédente de WP Migration.</p>
+			<?php endif; ?>
+			<p>
+				<a class="button" href="<?php echo esc_url( wp_nonce_url( admin_url( 'admin-post.php?action=wpmig_report_recheck' ), 'wpmig_report_recheck' ) ); ?>">Relancer les contrôles</a>
+				<span class="description">
+					<?php echo esc_html( ! empty( $report['consistency_checked'] ) ? 'Dernière vérification : ' . wpmig_date( $report['consistency_checked'] ) . '.' : 'Faits à la fin de l\'installation.' ); ?>
+					Après avoir corrigé un point (menus, permaliens, langues), relancez pour le vérifier.
+				</span>
+			</p>
 		</div>
 		<?php
 	}
@@ -1065,6 +1135,8 @@ class WPMIG_Admin {
 				<?php endforeach; ?>
 			</tbody></table>
 		</div>
+
+		<?php self::render_consistency( $report ); ?>
 
 		<div class="wpmig-card">
 			<h2>Informations</h2>

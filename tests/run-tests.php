@@ -14,6 +14,7 @@ ob_end_clean();
 
 require dirname( __DIR__ ) . '/includes/lib/class-wpmig-archive.php';
 require dirname( __DIR__ ) . '/includes/lib/class-wpmig-replacer.php';
+require dirname( __DIR__ ) . '/includes/lib/class-wpmig-consistency.php';
 require dirname( __DIR__ ) . '/includes/lib/class-wpmig-sql.php';
 require dirname( __DIR__ ) . '/includes/lib/class-wpmig-db-importer.php';
 
@@ -133,6 +134,75 @@ check( 'regex invalide refusée', null, WPMIG_Replacer::from_regex( '/(/', 'x' )
 check( 'regex vide refusée', null, WPMIG_Replacer::from_regex( '', 'x' ) );
 $t = new WPMIG_Replacer( WPMIG_Replacer::build_url_pairs( 'http://old.com', 'https://new.fr' ), array( 'ignore_case' => true ) );
 check( 'URL : casse ignorée, mots entiers', 'https://new.fr/a HTTP://OLD.COMPANY.FR', $t->replace( 'HTTP://OLD.COM/a HTTP://OLD.COMPANY.FR' ) );
+
+echo "\nContrôles de cohérence\n";
+$base = array(
+	'old_host'           => 'www.exemple.fr',
+	'new_host'           => 'dev.exemple.fr',
+	'permalinks'         => '/%postname%/',
+	'rewrite_rules'      => false,
+	'stylesheet'         => 'montheme',
+	'theme_mods'         => serialize( array( 'nav_menu_locations' => array( 'primary' => 5, 'footer' => 0 ) ) ),
+	'menus'              => array( 5, 9 ),
+	'polylang'           => null,
+	'polylang_languages' => array(),
+	'wpml_settings'      => null,
+	'icl'                => null,
+	'source'             => null,
+);
+$find = function ( array $items, $id ) {
+	foreach ( $items as $item ) {
+		if ( $item['id'] === $id ) {
+			return $item['status'];
+		}
+	}
+	return null;
+};
+$items = WPMIG_Consistency::evaluate( $base );
+check( 'menus : emplacement associé à un menu existant', 'ok', $find( $items, 'menus' ) );
+check( 'permaliens : règles à régénérer signalées', 'info', $find( $items, 'permalinks' ) );
+check( 'permaliens : règles présentes', 'ok', $find( WPMIG_Consistency::evaluate( array_merge( $base, array( 'rewrite_rules' => true ) ) ), 'permalinks' ) );
+check( 'aucun contrôle de langue sans extension', null, $find( $items, 'wpml_links' ) );
+$lost = WPMIG_Consistency::evaluate( array_merge( $base, array( 'menus' => array( 9 ) ) ) );
+check( 'menus : menu absent signalé', 'warning', $find( $lost, 'menus' ) );
+$pll = array(
+	'default_lang' => 'fr',
+	'force_lang'   => 3,
+	'domains'      => array( 'fr' => 'https://dev.exemple.fr', 'en' => 'https://en.exemple.fr' ),
+	'nav_menus'    => array( 'montheme' => array( 'primary' => array( 'fr' => 5, 'en' => 77 ) ) ),
+);
+$data = array_merge( $base, array( 'polylang' => serialize( $pll ), 'polylang_languages' => array( 'fr', 'en' ) ) );
+$items = WPMIG_Consistency::evaluate( $data );
+check( 'Polylang : menu d\'une langue absent', 'warning', $find( $items, 'menus' ) );
+check( 'Polylang : domaine de langue resté sur l\'ancien site', 'warning', $find( $items, 'domains' ) );
+check( 'Polylang : langue par défaut valide', 'ok', $find( $items, 'pll_default' ) );
+$pll['default_lang'] = '';
+check( 'Polylang : langue par défaut vide', 'warning', $find( WPMIG_Consistency::evaluate( array_merge( $data, array( 'polylang' => serialize( $pll ) ) ) ), 'pll_default' ) );
+$pll['default_lang'] = 'de';
+check( 'Polylang : langue par défaut inconnue', 'warning', $find( WPMIG_Consistency::evaluate( array_merge( $data, array( 'polylang' => serialize( $pll ) ) ) ), 'pll_default' ) );
+$pll['domains'] = array( 'fr' => 'https://dev.exemple.fr', 'en' => 'https://autre-domaine.com' );
+check( 'Polylang : domaine sans rapport avec l\'ancien site laissé tranquille', 'ok', $find( WPMIG_Consistency::evaluate( array_merge( $data, array( 'polylang' => serialize( $pll ) ) ) ), 'domains' ) );
+$wpml = array(
+	'default_language'          => 'fr',
+	'language_negotiation_type' => 2,
+	'language_domains'          => array( 'en' => 'en.exemple.fr', 'de' => 'www.exemple.fr' ),
+	'site_key'                  => 'abc123',
+);
+$w = array_merge( $base, array( 'wpml_settings' => serialize( $wpml ), 'icl' => array( 'total' => 8, 'null' => 3, 'orphan' => 0 ) ) );
+check( 'WPML : liens vides sans référence de l\'origine', 'info', $find( WPMIG_Consistency::evaluate( $w ), 'wpml_links' ) );
+$same = array_merge( $w, array( 'source' => array( 'icl_total' => 8, 'icl_null' => 3, 'icl_orphan' => 0 ) ) );
+check( 'WPML : liens vides déjà présents sur l\'origine', 'ok', $find( WPMIG_Consistency::evaluate( $same ), 'wpml_links' ) );
+$diff = array_merge( $w, array( 'source' => array( 'icl_total' => 8, 'icl_null' => 0, 'icl_orphan' => 0 ) ) );
+check( 'WPML : liens vides apparus depuis l\'origine', 'warning', $find( WPMIG_Consistency::evaluate( $diff ), 'wpml_links' ) );
+check( 'WPML : domaines de langue restés sur l\'ancien site', 'warning', $find( WPMIG_Consistency::evaluate( $w ), 'domains' ) );
+check( 'WPML : clé de site liée au domaine', 'info', $find( WPMIG_Consistency::evaluate( $w ), 'wpml_key' ) );
+$wpml['default_language'] = '';
+check( 'WPML : langue par défaut vide', 'warning', $find( WPMIG_Consistency::evaluate( array_merge( $w, array( 'wpml_settings' => serialize( $wpml ) ) ) ), 'wpml_default' ) );
+check( 'profil de l\'origine sans WPML', null, WPMIG_Consistency::profile( $base ) );
+check( 'profil de l\'origine avec WPML', array( 'icl_total' => 8, 'icl_null' => 3, 'icl_orphan' => 0 ), WPMIG_Consistency::profile( $w ) );
+check( 'décompte des statuts', array( 'ok' => 1, 'warning' => 0, 'info' => 1 ), WPMIG_Consistency::counts( WPMIG_Consistency::evaluate( $base ) ) );
+check( 'lecture sérialisée : booléen faux et null conservés', array( 'a' => false, 'b' => null, 'c' => array( 1 ) ), WPMIG_Consistency::parse( serialize( array( 'a' => false, 'b' => null, 'c' => array( 1 ) ) ) ) );
+check( 'lecture sérialisée : objet refusé', null, WPMIG_Consistency::parse( 'O:8:"stdClass":1:{s:1:"a";i:1;}' ) );
 
 echo "\nSQL\n";
 $samples = array( '', 'simple', "l'apostrophe", 'back\\slash', "nul\0byte", "ligne\nnouvelle\r\n", "ctrl\x1a", '"guillemets"', "émoji 😀", "\\'", "''" );

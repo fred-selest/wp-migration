@@ -76,6 +76,12 @@ Conservé dans l'administration du nouveau site, même après la suppression des
 
 ![Rapport de migration](docs/screenshots/15-rapport-de-migration.png)
 
+### Cohérence du site (contrôles après l'installation)
+
+| Fin de l'installation | Rapport de migration |
+|---|---|
+| ![Installeur : cohérence du site](docs/screenshots/26-installeur-coherence.png) | ![Cohérence du site](docs/screenshots/25-coherence-du-site.png) |
+
 ## Compatibilité
 
 | | Pris en charge | Réellement testé |
@@ -175,6 +181,17 @@ Le téléchargement se fait par morceaux de 8 Mo (requêtes HTTP `Range`) : il r
 - détail **par table** (lignes exportées / importées, tables de journaux recréées vides), remplacements effectués, éléments exclus par le site d'origine (caches, `debug.log`…), avertissements et **journal complet** de l'installation.
 
 Le rapport se télécharge en texte (bouton « Télécharger le rapport ») ; en ligne de commande : `wp migration report` (`--format=json` ; code de sortie 1 si une anomalie a été détectée, pratique dans un script). L'installeur en ligne de commande affiche aussi le résumé des contrôles à la fin.
+
+### Cohérence du site (contrôles après l'installation)
+
+Une copie peut être « complète » sans être **cohérente** : un réglage qui pointe vers un élément qui n'existe plus ne fait échouer aucune requête. À la fin de l'installation, puis à tout moment dans **WP Migration → Rapport de migration → Cohérence du site** (bouton **Relancer les contrôles** après une correction), l'extension vérifie sans rien modifier :
+
+- **Menus** : chaque emplacement de menu du thème actif (et, avec Polylang, chaque menu par langue) pointe vers un menu qui existe ;
+- **Permaliens** : si les règles de réécriture ne sont pas encore régénérées, rappel d'enregistrer **Réglages → Permaliens** (pages traduites `/fr/…` en 404) ;
+- **WPML** : liens de traduction (`icl_translations`) **comparés à ceux du site d'origine** — une ligne à `element_id` vide qui existait déjà sur l'origine (traduction en attente ou supprimée dans WPML) est signalée comme telle, pas comme une anomalie de la migration ; une ligne apparue depuis, ou un lien vers un contenu absent, est signalé. Langue par défaut, domaines de langue restés sur l'ancien site, clé de site liée au domaine ;
+- **Polylang** : langue par défaut vide ou inconnue, domaines de langue restés sur l'ancien site, données WPML encore présentes (passage de WPML à Polylang : les tables `*_icl_*` sont alors obsolètes).
+
+Chaque point est **OK**, **À vérifier** ou **Info**. Rien n'est jamais corrigé automatiquement, et un point à vérifier ne fait pas échouer l'installation. En SSH : `wp migration check` (`--format=json`, `--save` pour l'enregistrer dans le rapport ; code de sortie 1 s'il y a un point à vérifier). La section figure aussi dans l'export texte du rapport.
 
 ### Synchroniser le contenu (travail sur une copie)
 

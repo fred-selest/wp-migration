@@ -24,6 +24,7 @@ class WPMIG_Installer_Builder {
 		return array(
 			'includes/lib/class-wpmig-archive.php',
 			'includes/lib/class-wpmig-replacer.php',
+			'includes/lib/class-wpmig-consistency.php',
 			'includes/lib/class-wpmig-sql.php',
 			'includes/lib/class-wpmig-db-importer.php',
 		);
