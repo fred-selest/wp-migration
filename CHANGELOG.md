@@ -3,6 +3,11 @@
 Toutes les évolutions notables de WP Migration sont consignées ici.
 Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le projet respecte le [versionnage sémantique](https://semver.org/lang/fr/).
 
+## [1.5.1] - 2026-09-29
+
+### Ajouté
+- Logo de l'extension : une bretzel alsacienne dans une flèche circulaire de sauvegarde. Il apparaît dans le menu d'administration (version monochrome recolorée par WordPress), en tête des pages WP Migration et du rapport de migration, dans l'écran des mises à jour et la liste des extensions, et en tête de l'installeur. Fichiers SVG et PNG dans `assets/logo/`.
+
 ## [1.5.0] - 2026-09-29
 
 ### Ajouté
@@ -79,6 +84,7 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le pr
 - Protection de l'installeur par mot de passe.
 - Compatibilité WordPress 4.9 à 7.1 et PHP 5.6 à 8.4.
 
+[1.5.1]: https://github.com/fred-selest/wp-migration/releases/tag/v1.5.1
 [1.5.0]: https://github.com/fred-selest/wp-migration/releases/tag/v1.5.0
 [1.4.0]: https://github.com/fred-selest/wp-migration/releases/tag/v1.4.0
 [1.3.0]: https://github.com/fred-selest/wp-migration/releases/tag/v1.3.0

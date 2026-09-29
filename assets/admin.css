@@ -52,4 +52,5 @@
 .wpmig .wpmig-danger{color:#b32d2e}
 .wpmig .wpmig-sync-history{margin-top:16px}
 .wpmig .wpmig-sync-source select{vertical-align:baseline}
+.wpmig h1 .wpmig-logo{width:36px;height:36px;vertical-align:middle;margin:-4px 10px 0 0}
 @media (max-width:782px){.wpmig .wpmig-actions{justify-content:flex-start}}
