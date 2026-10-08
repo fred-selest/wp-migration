@@ -48,6 +48,8 @@ jobs:
           coverage: none
       - name: MySQL
         run: sudo systemctl start mysql.service
+      - name: Émulateur S3 (moto)
+        run: pip install "moto[server]==5.0.28" boto3
       - name: Test de bout en bout (WordPress ${{ matrix.wp }})
         env:
           WP_VERSION: ${{ matrix.wp }}

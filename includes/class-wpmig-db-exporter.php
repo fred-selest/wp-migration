@@ -344,7 +344,7 @@ class WPMIG_DB_Exporter {
 		$opts = $this->package->data['options'];
 		if ( $name === $wpdb->options ) {
 			// Our own state (post-install flag, report, synchronization) never travels with a package.
-			$where = "option_name NOT IN ('wpmig_installed', 'wpmig_report', 'wpmig_sync_link', 'wpmig_sync_state', 'wpmig_sync_history', 'wpmig_search_state', 'wpmig_search_history')";
+			$where = "option_name NOT IN ('wpmig_installed', 'wpmig_report', 'wpmig_sync_link', 'wpmig_sync_state', 'wpmig_sync_history', 'wpmig_search_state', 'wpmig_search_history', 'wpmig_s3', 'wpmig_s3_state', 'wpmig_s3_history')";
 			if ( ! empty( $opts['skip_transients'] ) ) {
 				$where .= " AND option_name NOT LIKE '\\_transient\\_%' AND option_name NOT LIKE '\\_site\\_transient\\_%'";
 			}

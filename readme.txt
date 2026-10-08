@@ -4,7 +4,7 @@ Tags: migration, duplicate, clone, backup, move
 Requires at least: 4.9
 Tested up to: 7.1
 Requires PHP: 5.6
-Stable tag: 1.14.0
+Stable tag: 1.15.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -35,6 +35,9 @@ Multisite non pris en charge.
 3. Envoyer l'archive et installer.php sur le nouveau serveur puis ouvrir installer.php dans le navigateur.
 
 == Changelog ==
+
+= 1.15.0 =
+* Stockage S3 : envoi des sauvegardes (manuel ou planifié) vers un stockage compatible S3, par morceaux reprenables, avec liens temporaires de téléchargement et conservation des N dernières ; commandes `wp migration s3`.
 
 = 1.14.0 =
 * Gros sites : lignes de la base de plusieurs dizaines de Mo exportées et importées sans épuiser la mémoire, lignes plus grandes que max_allowed_packet reconstituées, valeur trop grande signalée avant l'import au lieu d'être perdue silencieusement.
