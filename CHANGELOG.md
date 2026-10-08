@@ -3,6 +3,16 @@
 Toutes les évolutions notables de WP Migration sont consignées ici.
 Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le projet respecte le [versionnage sémantique](https://semver.org/lang/fr/).
 
+## [1.13.0] - 2026-10-08
+
+### Ajouté
+- **Types de contenus personnalisés** dans la synchronisation : événements, portfolio, FAQ, modèles de blocs et autres types déclarés par des extensions ou le thème. La case « Autres contenus (types personnalisés) » propose, après collage du lien, les types du site d'origine avec leur nombre de contenus. Repris comme les articles et pages (métadonnées, taxonomies, traductions WPML, image à la une). Alerte si le type n'est pas enregistré sur la copie. `--custom-types=` en WP-CLI.
+- **Contenus disparus de l'origine** : l'analyse signale (sans rien supprimer) les articles, pages, produits, codes promo et contenus personnalisés qui existent sur la copie, ont été créés avant la copie et n'existent plus sur le site d'origine. Nouvelle colonne « absents de l'origine » et remarques détaillées (50 par type).
+
+### Modifié
+- Le tableau de l'analyse n'affiche que les colonnes utiles.
+- Côté site d'origine : nouvelles opérations de lecture seule (liste des types personnalisés, empreintes des contenus). Les types réservés (produits, commandes, codes promo, médias, menus, modèles techniques) sont refusés et ne peuvent pas être lus par ce biais.
+
 ## [1.12.0] - 2026-10-08
 
 ### Ajouté
@@ -150,6 +160,7 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le pr
 - Protection de l'installeur par mot de passe.
 - Compatibilité WordPress 4.9 à 7.1 et PHP 5.6 à 8.4.
 
+[1.13.0]: https://github.com/fred-selest/wp-migration/releases/tag/v1.13.0
 [1.12.0]: https://github.com/fred-selest/wp-migration/releases/tag/v1.12.0
 [1.11.0]: https://github.com/fred-selest/wp-migration/releases/tag/v1.11.0
 [1.10.0]: https://github.com/fred-selest/wp-migration/releases/tag/v1.10.0

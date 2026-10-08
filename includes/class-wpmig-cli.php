@@ -333,7 +333,10 @@ class WPMIG_CLI {
 	 * : Synchronization link created on the source site (wp migration sync-link).
 	 *
 	 * [--types=<types>]
-	 * : Comma separated: orders, customers, products, coupons, posts, media, comments. Default: all.
+	 * : Comma separated: orders, customers, products, coupons, posts, media, comments, custom. Default: all except custom.
+	 *
+	 * [--custom-types=<types>]
+	 * : Custom post types to synchronize (events, portfolio...), comma separated. Adds the "custom" kind.
 	 *
 	 * [--since=<date>]
 	 * : Date of the copy, local time "YYYY-MM-DD HH:MM". Default: from the migration report or the last synchronization.
@@ -356,9 +359,13 @@ class WPMIG_CLI {
 	 * @param array $assoc_args Options.
 	 */
 	public function sync( $args, $assoc_args ) {
-		$kinds = isset( $assoc_args['types'] ) ? array_map( 'trim', explode( ',', $assoc_args['types'] ) ) : WPMIG_Sync::KINDS;
+		$kinds = isset( $assoc_args['types'] ) ? array_map( 'trim', explode( ',', $assoc_args['types'] ) ) : array_diff( WPMIG_Sync::KINDS, array( 'custom' ) );
+		$types = isset( $assoc_args['custom-types'] ) ? array_filter( array_map( 'trim', explode( ',', $assoc_args['custom-types'] ) ), 'strlen' ) : array();
+		if ( $types && ! in_array( 'custom', $kinds, true ) ) {
+			$kinds[] = 'custom';
+		}
 		try {
-			$sync = WPMIG_Sync::start( $args[0], $kinds, isset( $assoc_args['since'] ) ? $assoc_args['since'] : '', isset( $assoc_args['force'] ) );
+			$sync = WPMIG_Sync::start( $args[0], $kinds, isset( $assoc_args['since'] ) ? $assoc_args['since'] : '', isset( $assoc_args['force'] ), $types );
 			$state = $sync->run();
 			if ( 'error' === $state['status'] ) {
 				WP_CLI::error( $state['error'] );

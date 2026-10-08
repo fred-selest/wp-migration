@@ -607,9 +607,16 @@
 		var running = [ 'analyzing', 'importing', 'files', 'finalizing', 'undoing' ];
 
 		var countsTable = function ( state ) {
-			var order = [ 'insert', 'update', 'stock', 'keep', 'same', 'skip' ];
+			var all = [ 'insert', 'update', 'stock', 'keep', 'same', 'skip', 'gone' ];
+			var kinds = Object.keys( state.counts || {} );
+			// Only the columns that hold something.
+			var order = all.filter( function ( a ) {
+				return kinds.some( function ( kind ) {
+					return state.counts[ kind ][ a ];
+				} );
+			} );
 			var rows = '';
-			Object.keys( state.counts || {} ).forEach( function ( kind ) {
+			kinds.forEach( function ( kind ) {
 				var c = state.counts[ kind ];
 				rows += '<tr><th>' + esc( syncLabels.kinds[ kind ] || kind ) + '</th>';
 				order.forEach( function ( a ) {
@@ -617,7 +624,7 @@
 				} );
 				rows += '</tr>';
 			} );
-			if ( ! rows ) {
+			if ( ! rows || ! order.length ) {
 				return '<p>Aucun contenu créé ou modifié sur le site d\'origine depuis cette date.</p>';
 			}
 			var labels = state.status === 'done' ? syncLabels.done : syncLabels.actions;
@@ -703,6 +710,16 @@
 					select.insertAdjacentHTML( 'beforeend', '<option value="' + esc( p.value ) + '">' + esc( p.label ) + '</option>' );
 				} );
 				select.hidden = ! info.packages.length;
+				var custom = $( '#wpmig-sync-custom' );
+				var box = $( '#wpmig-sync-types' );
+				var types = info.custom_types || [];
+				custom.disabled = ! types.length;
+				custom.checked = false;
+				box.hidden = true;
+				box.innerHTML = types.map( function ( t ) {
+					return '<label><input type="checkbox" name="types" value="' + esc( t.name ) + '" checked> ' + esc( t.label ) + ' <span class="description">(' + esc( t.count ) + ', <code>' + esc( t.name ) + '</code>)</span></label>';
+				} ).join( '' );
+				$( '#wpmig-sync-custom-help' ).textContent = types.length ? 'Cochez « Autres contenus » puis les types à synchroniser.' : 'Aucun type de contenu personnalisé sur le site d\'origine (ou il doit avoir WP Migration 1.13.0 ou plus récent).';
 				if ( info.default ) {
 					$( '#wpmig-sync-since' ).value = info.default;
 					help.textContent = 'Date trouvée automatiquement (' + info.default_h + ').';
@@ -719,15 +736,24 @@
 			}
 		} );
 
+		$( '#wpmig-sync-custom' ).addEventListener( 'change', function () {
+			$( '#wpmig-sync-types' ).hidden = ! this.checked;
+		} );
+
 		syncForm.addEventListener( 'submit', function ( e ) {
 			e.preventDefault();
 			var kinds = [];
 			syncForm.querySelectorAll( 'input[name="kinds"]:checked' ).forEach( function ( c ) {
 				kinds.push( c.value );
 			} );
+			var types = [];
+			syncForm.querySelectorAll( 'input[name="types"]:checked' ).forEach( function ( c ) {
+				types.push( c.value );
+			} );
 			var button = $( 'button[type="submit"]', syncForm );
 			button.disabled = true;
 			post( 'wpmig_sync_start', {
+				types: types.join( ',' ),
 				link: $( '#wpmig-sync-link' ).value,
 				kinds: kinds.join( ',' ),
 				since: $( '#wpmig-sync-since' ).value,
