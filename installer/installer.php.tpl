@@ -529,6 +529,7 @@ class WPMIG_Installer {
 				'message'  => '',
 				'warnings' => array(),
 				'notices'  => array(),
+				'aside'    => array(),
 				'extract'  => array(),
 				'db'       => array(),
 				'result'   => array(),
@@ -1505,6 +1506,7 @@ class WPMIG_Installer {
 						// Server specific files of the old host (PHP handlers, auto_prepend_file...) are
 						// kept aside: they are a classic cause of "500 Internal Server Error" after a move.
 						$dest = $this->root . '/' . $path . '.wpmig-source';
+						$this->state['aside'][] = $path . '.wpmig-source';
 						$this->state['notices'][] = $path . ' d\'origine conservé sous le nom ' . $path . '.wpmig-source';
 					} else {
 						$dest = $this->root . '/' . $path;
@@ -1961,6 +1963,7 @@ class WPMIG_Installer {
 				$where = '';
 				if ( false !== @file_put_contents( $aside, "<?php exit; // wp-config.php du site d'origine, conservé par WP Migration. ?>\n" . (string) $source ) ) {
 					@chmod( $aside, 0600 );
+					$this->state['aside'][] = basename( $aside );
 					$where = ' (fichier d\'origine : ' . basename( $aside ) . ')';
 				}
 				$this->state['notices'][] = 'Constantes du wp-config.php d\'origine absentes du fichier conservé : ' . implode( ', ', array_slice( $missing, 0, 25 ) ) . ( count( $missing ) > 25 ? '…' : '' ) . ' — ajoutez-les si le site en dépend' . $where . '.';
@@ -1984,6 +1987,7 @@ class WPMIG_Installer {
 			$guard  = "<?php exit; // Sauvegarde WP Migration du wp-config.php remplacé le " . gmdate( 'Y-m-d H:i:s' ) . " UTC. ?>\n";
 			if ( false !== @file_put_contents( $backup, $guard . (string) @file_get_contents( $target ) ) ) {
 				@chmod( $backup, 0600 );
+				$this->state['aside'][]   = basename( $backup );
 				$this->state['notices'][] = 'wp-config.php existant sauvegardé : ' . basename( $backup );
 			}
 		}
@@ -2064,7 +2068,10 @@ class WPMIG_Installer {
 		if ( false === stripos( $server, 'microsoft-iis' ) && rtrim( $p['url_home'], '/' ) === rtrim( $p['url_site'], '/' ) ) {
 			$htaccess = $this->root . '/.htaccess';
 			if ( is_file( $htaccess ) ) {
-				@copy( $htaccess, $htaccess . '.wpmig-backup-' . gmdate( 'Ymd-His' ) );
+				$saved = $htaccess . '.wpmig-backup-' . gmdate( 'Ymd-His' );
+				if ( @copy( $htaccess, $saved ) ) {
+					$this->state['aside'][] = basename( $saved );
+				}
 			}
 			$rules  = "# BEGIN WordPress\n";
 			$rules .= "<IfModule mod_rewrite.c>\nRewriteEngine On\n";
@@ -2631,6 +2638,22 @@ class WPMIG_Installer {
 	}
 
 	/**
+	 * Copies kept aside by this installation (replaced wp-config.php, files of the old host) still on disk.
+	 *
+	 * @return array Absolute paths.
+	 */
+	private function aside_files() {
+		$files = array();
+		foreach ( array_unique( (array) $this->state['aside'] ) as $name ) {
+			$name = basename( (string) $name );
+			if ( preg_match( '/^[A-Za-z0-9._-]+$/', $name ) && ( is_file( $this->root . '/' . $name ) || is_link( $this->root . '/' . $name ) ) ) {
+				$files[] = $this->root . '/' . $name;
+			}
+		}
+		return $files;
+	}
+
+	/**
 	 * Remove the installer, the archive and the working directory.
 	 *
 	 * @return array Result.
@@ -2643,8 +2666,12 @@ class WPMIG_Installer {
 		}
 		$this->rrmdir( $this->data_dir );
 		@unlink( $this->file );
+		$aside = $this->aside_files();
+		foreach ( $aside as $path ) {
+			@unlink( $path );
+		}
 		$left = array();
-		foreach ( array( $this->file, $archive, $this->data_dir ) as $path ) {
+		foreach ( array_merge( array( $this->file, $archive, $this->data_dir ), $aside ) as $path ) {
 			if ( $path && file_exists( $path ) ) {
 				$left[] = basename( $path );
 			}
@@ -2669,6 +2696,7 @@ class WPMIG_Installer {
 			'message'  => $this->state['message'],
 			'warnings' => array_values( array_slice( $this->state['warnings'], 0, 100 ) ),
 			'notices'  => array_values( array_unique( $this->state['notices'] ) ),
+			'aside'    => array_map( 'basename', $this->aside_files() ),
 			'result'   => $this->state['result'],
 		);
 	}
@@ -2835,6 +2863,7 @@ class WPMIG_Installer {
 								'size'       => self::size( $manifest['stats']['size'] ),
 								'tables'     => count( $manifest['tables'] ),
 								'db_only'    => ! empty( $manifest['db_only'] ),
+								'prefix'     => $manifest['site']['table_prefix'],
 							),
 							'checks'   => $checks,
 							'blocking' => $this->has_blocking( $checks ),
@@ -3416,7 +3445,7 @@ table.checks td{padding:3px 0}
 			field('db_name', 'Nom de la base', d.db_name, 'text', '', 'required') +
 			field('db_user', 'Utilisateur', d.db_user, 'text', '', 'required autocomplete="off"') +
 			field('db_pass', 'Mot de passe', d.db_pass, 'password', '', 'autocomplete="new-password"') +
-			field('db_prefix', 'Préfixe des tables', d.db_prefix, 'text', 'Préfixe d\'origine : <code>' + esc(info.defaults.db_prefix) + '</code>') +
+			field('db_prefix', 'Préfixe des tables', d.db_prefix, 'text', 'Préfixe d\'origine : <code>' + esc(p.prefix) + '</code>') +
 			'<div><label>Tables existantes</label>' +
 			'<label class="inline"><input type="radio" name="db_action" value="replace" checked> Remplacer uniquement les tables du site importé (même préfixe)</label>' +
 			'<label class="inline"><input type="radio" name="db_action" value="empty"> Vider entièrement la base (supprime toutes les tables)</label>' +
@@ -3551,6 +3580,7 @@ table.checks td{padding:3px 0}
 			checks + consistency + warns + (list ? '<details><summary>Détails</summary><ul class="list">' + list + '</ul></details>' : '') +
 			'</div><div class="card"><h2>Sécurité : supprimez les fichiers d\'installation</h2>' +
 			'<p>L\'installeur, l\'archive et le dossier de travail contiennent une copie complète du site et de la base de données. Supprimez-les dès que vous avez vérifié le site.</p>' +
+			((s.aside && s.aside.length) ? '<p>Seront aussi supprimés, car ils contiennent des identifiants ou l\'ancienne configuration du serveur : <code>' + s.aside.map(esc).join('</code>, <code>') + '</code>. Gardez-en une copie avant si vous en avez besoin.</p>' : '') +
 			'<div id="cleanmsg"></div><div class="actions"><a class="button" href="' + esc(res.home) + '" target="_blank" rel="noopener">Voir le site</a>' +
 			'<button class="primary" id="clean">Supprimer les fichiers et se connecter</button></div></div>';
 		document.getElementById('clean').onclick = function () {

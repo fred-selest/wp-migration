@@ -781,7 +781,7 @@ class WPMIG_Admin {
 			echo ( ! empty( $report['checks']['ok'] ) ? 'Contrôles réussis : la copie est complète. ' : '<strong>Des points sont à vérifier.</strong> ' ) . '<a href="' . esc_url( self::report_url() ) . '">Voir le rapport de migration</a>. ';
 		}
 		if ( $left ) {
-			echo 'Des fichiers d\'installation sont encore présents sur le serveur (' . esc_html( implode( ', ', array_map( 'basename', $left ) ) ) . ') : ils contiennent une copie complète du site et doivent être supprimés' . ( $report ? ' (le rapport de migration est conservé)' : '' ) . '.</p>';
+			echo 'Des fichiers d\'installation sont encore présents sur le serveur (' . esc_html( implode( ', ', array_map( 'basename', $left ) ) ) . ') : ils contiennent une copie du site ou des identifiants et doivent être supprimés' . ( $report ? ' (le rapport de migration est conservé)' : '' ) . '.</p>';
 			echo '<p><a class="button button-primary" href="' . esc_url( $url ) . '">Supprimer les fichiers d\'installation</a></p></div>';
 		} else {
 			echo 'Pensez à vérifier les réglages des permaliens et de vos extensions de cache / SEO.</p>';

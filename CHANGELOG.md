@@ -3,6 +3,15 @@
 Toutes les évolutions notables de WP Migration sont consignées ici.
 Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le projet respecte le [versionnage sémantique](https://semver.org/lang/fr/).
 
+## [1.16.1] - 2026-10-08
+
+### Corrigé
+- **Installeur : « Préfixe d'origine »** affichait le préfixe du wp-config.php de la destination et non celui du site d'origine, ce qui prêtait à confusion quand ils diffèrent (le préfixe pré-rempli dans le champ, lui, est bien celui de la destination).
+- **Nettoyage incomplet** : les copies mises de côté pendant l'installation restaient sur le serveur et contiennent des identifiants ou l'ancienne configuration. Elles sont désormais supprimées avec l'installeur et l'archive (bouton « Supprimer les fichiers et se connecter », `--cleanup`), après avoir été listées sur l'écran de fin : `wp-config-sauvegarde-*.php`, `wp-config-origine-*.php`, `.htaccess.wpmig-backup-*` (l'ancien `.htaccess`), `.htaccess.wpmig-source`, `.user.ini.wpmig-source`, `php.ini.wpmig-source`. Le nettoyage de l'extension (message « fichiers d'installation encore présents », rapport de migration) les reconnaît aussi.
+
+### Ajouté
+- Le test de bout en bout vérifie que ces copies sont créées, listées puis supprimées, et que le `wp-config.php` conservé n'est pas touché.
+
 ## [1.16.0] - 2026-10-08
 
 ### Modifié
@@ -202,6 +211,7 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le pr
 - Protection de l'installeur par mot de passe.
 - Compatibilité WordPress 4.9 à 7.1 et PHP 5.6 à 8.4.
 
+[1.16.1]: https://github.com/fred-selest/wp-migration/releases/tag/v1.16.1
 [1.16.0]: https://github.com/fred-selest/wp-migration/releases/tag/v1.16.0
 [1.15.0]: https://github.com/fred-selest/wp-migration/releases/tag/v1.15.0
 [1.14.0]: https://github.com/fred-selest/wp-migration/releases/tag/v1.14.0
