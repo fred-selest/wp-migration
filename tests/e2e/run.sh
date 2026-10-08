@@ -288,25 +288,32 @@ PY
 	S3_SECRET="${KEYS##* }"
 	[ -n "$S3_ACCESS" ] && ok "émulateur S3 démarré (authentification exigée)" || ko "émulateur S3 démarré" "$(tail -3 "$WORK/moto1.log")"
 	s3py() { "$MOTO_PY" - "$@"; }
-	s3check() { # script python lisant ses arguments : endpoint accès secret
-		s3py "$@"
-	}
 
 	run "réglages S3 enregistrés" wpd migration s3 --endpoint="http://127.0.0.1:$PORT_S3" --region=eu-west-3 --bucket=sauvegardes --prefix= --access-key="$S3_ACCESS" --secret-key="$S3_SECRET" --keep=2
 	run "connexion S3 réussie" wpd migration s3-test
 	wpd migration s3 --secret-key=cle-secrete-erronee >/dev/null
 	OUT=$(wpd migration s3-test 2>&1 || true)
 	contains "mauvaise clé secrète refusée (signature vérifiée par le serveur)" "$OUT" "SignatureDoesNotMatch"
-	wpd migration s3 --secret-key="$S3_SECRET" >/dev/null
-	check "clé secrète absente de l'export de la base" "0" "$(wpd db export - 2>/dev/null | grep -c "$S3_SECRET")"
+	wpd migration s3 --secret-key="$S3_SECRET" --keep=0 >/dev/null
+	# La clé est bien dans la base du site (positif), mais jamais dans une sauvegarde : archive sans compression, recherche directe.
+	check "contrôle positif : la clé est dans la base du site" "1" "$(wpd db export - 2>/dev/null | grep -c "$S3_SECRET")"
+	run "sauvegarde de la base sans compression" wpd migration build --name=s3chk --db-only --no-compress --password="$INSTALLER_PASSWORD"
+	CHK_ARCHIVE=$(printf '%s\n' "$LAST" | sed -n 's/^Archive *: //p' | tail -1)
+	check "clé secrète absente de la sauvegarde" "0" "$(grep -c -a "$S3_SECRET" "$CHK_ARCHIVE")"
+	check "réglages S3 absents de la sauvegarde" "0" "$(grep -c -a "wpmig_s3" "$CHK_ARCHIVE")"
 
 	IDS=$(wpd migration list | awk 'NR>1 && $3=="complete" {print $1}' | sort | tail -3)
-	FIRST=$(echo "$IDS" | head -1)
-	for id in $IDS; do run "envoi de la sauvegarde $id" wpd migration s3-send "$id"; done
-	check "rétention : seules les 2 plus récentes restent sur S3" "2" "$(wpd migration s3-list | awk '{print $1}' | sed -E 's#^([0-9]{8}_[0-9]{6}_[a-f0-9]{12})/.*#\1#' | grep -E '^[0-9]{8}_' | sort -u | wc -l)"
-	LAST=$(echo "$IDS" | tail -1)
-	ARCH=$(ls "$DST"/wp-content/wpmig-backups/*_"$LAST"_archive.wpmig)
-	SAME=$(s3py "http://127.0.0.1:$PORT_S3" "$S3_ACCESS" "$S3_SECRET" "$LAST" "$ARCH" <<'PY'
+	BIG_ID=""
+	BIG_SIZE=0
+	for id in $IDS; do
+		run "envoi de la sauvegarde $id" wpd migration s3-send "$id"
+		size=$(stat -c %s "$(ls "$DST"/wp-content/wpmig-backups/*_"$id"_archive.wpmig)")
+		[ "$size" -gt "$BIG_SIZE" ] && { BIG_SIZE=$size; BIG_ID=$id; }
+	done
+	SENT=$(wpd migration s3-list | awk '{print $1}' | sed -E 's#^([0-9]{8}_[0-9]{6}_[a-f0-9]{12})/.*#\1#' | grep -E '^[0-9]{8}_' | sort -u | wc -l)
+	check "les sauvegardes envoyées sont sur S3" "3" "$SENT"
+	ARCH=$(ls "$DST"/wp-content/wpmig-backups/*_"$BIG_ID"_archive.wpmig)
+	SAME=$(s3py "http://127.0.0.1:$PORT_S3" "$S3_ACCESS" "$S3_SECRET" "$BIG_ID" "$ARCH" <<'PY'
 import boto3, hashlib, sys
 ep, ak, sk, bid, local = sys.argv[1:6]
 s3 = boto3.client('s3', endpoint_url=ep, region_name='eu-west-3', aws_access_key_id=ak, aws_secret_access_key=sk)
@@ -320,7 +327,11 @@ print(('identique' if same else 'DIFFERENT') + ('|multipart' if '-' in etag else
 PY
 )
 	check "archive sur S3 identique au fichier local (sha256, lu par boto3)" "identique" "${SAME%%|*}"
-	contains "archive envoyée par morceaux (multipart)" "$SAME" "multipart"
+	contains "archive de $((BIG_SIZE / 1048576)) Mo envoyée par morceaux (multipart)" "$SAME" "multipart"
+	wpd migration s3 --keep=2 >/dev/null
+	run "rétention appliquée" wpd migration s3-prune
+	check "rétention : seules les 2 plus récentes restent sur S3" "2" "$(wpd migration s3-list | awk '{print $1}' | sed -E 's#^([0-9]{8}_[0-9]{6}_[a-f0-9]{12})/.*#\1#' | grep -E '^[0-9]{8}_' | sort -u | wc -l)"
+	S3ID=$(echo "$IDS" | tail -1)
 
 	# Sauvegarde planifiée envoyée sur S3.
 	run "planification avec envoi S3" wpd migration schedule --enable --frequency=daily --hour=4 --type=db --password='Planif-passw0rd' --notify=never --s3
@@ -330,13 +341,13 @@ PY
 
 	# Liens temporaires et installation depuis S3 (instance sans contrôle).
 	wpd migration s3 --endpoint="http://127.0.0.1:$PORT_S3_OPEN" --access-key=a --secret-key=b >/dev/null
-	run "envoi vers l'instance ouverte" wpd migration s3-send "$LAST"
-	LINKS=$(wpd migration s3-link "$LAST" --hours=2)
+	run "envoi vers l'instance ouverte" wpd migration s3-send "$S3ID"
+	LINKS=$(wpd migration s3-link "$S3ID" --hours=2)
 	INST_URL=$(printf '%s\n' "$LINKS" | grep -o "curl -o installer.php '[^']*'" | sed "s/curl -o installer.php '//; s/'$//")
 	ARCH_URL=$(printf '%s\n' "$LINKS" | grep -o "source-url='[^']*'" | sed "s/source-url='//; s/'$//")
 	mkdir -p "$WORK/s3-dl"
 	curl -s -o "$WORK/s3-dl/installer.php" "$INST_URL"
-	cmp -s "$WORK/s3-dl/installer.php" "$(ls "$DST"/wp-content/wpmig-backups/*_"$LAST"_installer.php)" && ok "installeur téléchargé par lien temporaire, identique" || ko "installeur téléchargé par lien temporaire"
+	cmp -s "$WORK/s3-dl/installer.php" "$(ls "$DST"/wp-content/wpmig-backups/*_"$S3ID"_installer.php)" && ok "installeur téléchargé par lien temporaire, identique" || ko "installeur téléchargé par lien temporaire"
 	OUT=$(cd "$WORK/s3-dl" && php -d error_reporting=-1 -d display_errors=1 installer.php --source-url="$ARCH_URL" --check 2>&1)
 	contains "installeur : archive récupérée depuis S3 et contrôlée" "$OUT" "Archive téléchargée et contrôlée"
 	absent "installeur : aucun avis de dépréciation" "$OUT" "Deprecated"
