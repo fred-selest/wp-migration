@@ -271,6 +271,9 @@ class WPMIG_Report {
 		if ( ! empty( $o['keep_guid'] ) ) {
 			$opts[] = 'GUID conservés';
 		}
+		if ( ! empty( $o['keep_config'] ) ) {
+			$opts[] = 'wp-config.php existant conservé';
+		}
 		if ( ! empty( $o['new_salts'] ) ) {
 			$opts[] = 'nouvelles clés de sécurité';
 		}

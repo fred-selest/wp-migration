@@ -227,9 +227,13 @@ done
 
 # --------------------------------------------------------------------------
 step "Restauration d'une sauvegarde sur le site de destination"
+wpd config set E2E_ORIGINE_SEULE oui >/dev/null
 run "sauvegarde de la destination" wpd migration build --name=avant --password="$INSTALLER_PASSWORD" --exclude-uploads
+wpd config delete E2E_ORIGINE_SEULE >/dev/null
 ID=$(wpd migration list | awk 'NR==2 {print $1}')
 wpd option update blogname "Titre modifié après la sauvegarde" >/dev/null
+# Réglage propre à ce serveur, absent de la sauvegarde : le wp-config.php actuel doit être conservé.
+wpd config set E2E_REGLAGE_HEBERGEUR hebergeur >/dev/null
 TMP_ID=$(wpd post create --post_title="Article temporaire" --post_status=publish --porcelain)
 run "restauration préparée" wpd migration restore "$ID"
 INST=$(ls "$DST"/avant_*_installer.php 2>/dev/null | head -1)
@@ -239,10 +243,24 @@ run "préparation annulée" wpd migration restore "$ID" --cancel
 [ -z "$(ls "$DST"/avant_*_installer.php 2>/dev/null)" ] && ok "racine nettoyée par l'annulation" || ko "racine nettoyée par l'annulation"
 run "restauration préparée (2)" wpd migration restore "$ID"
 run "restauration exécutée" php "$(ls "$DST"/avant_*_installer.php | head -1)" --url="$URL_DST" --db-host="$DB_HOST" --db-name=e2e_dst --db-user="$DB_USER" --db-pass="$DB_PASS" --db-action=replace --cleanup
+contains "constante de l'origine absente du fichier conservé signalée" "$LAST" "E2E_ORIGINE_SEULE"
+[ -n "$(ls "$DST"/wp-config-origine-*.php 2>/dev/null)" ] && ok "wp-config.php d'origine mis de côté" || ko "wp-config.php d'origine mis de côté"
+check "constante de l'origine non ajoutée au fichier conservé" "0" "$(grep -c E2E_ORIGINE_SEULE "$DST/wp-config.php")"
 check "titre revenu à l'état de la sauvegarde" "Site de test" "$(wpd option get blogname)"
 check "article temporaire disparu" "0" "$(wpd post list --post_type=post --title='Article temporaire' --format=count)"
 [ -z "$(ls "$DST"/avant_*_installer.php "$DST"/avant_*.wpmig 2>/dev/null)" ] && ok "racine propre après la restauration" || ko "racine propre après la restauration"
 [ -n "$(ls "$DST"/wp-content/wpmig-backups/avant_*_archive.wpmig 2>/dev/null)" ] && ok "la sauvegarde est conservée" || ko "la sauvegarde est conservée"
+check "wp-config.php actuel conservé (réglage du serveur)" "hebergeur" "$(wpd config get E2E_REGLAGE_HEBERGEUR)"
+check "wp-config.php : base de données de la destination" "e2e_dst" "$(wpd config get DB_NAME)"
+check "wp-config.php : site toujours en ligne après la restauration" "200" "$(curl -s -o /dev/null -w '%{http_code}' "$URL_DST/")"
+BAK=$(ls "$DST"/wp-config-sauvegarde-*.php 2>/dev/null | head -1)
+[ -n "$BAK" ] && ok "ancien wp-config.php sauvegardé" || ko "ancien wp-config.php sauvegardé"
+contains "sauvegarde du wp-config.php inoffensive (s'arrête aussitôt)" "$(head -c 20 "$BAK" 2>/dev/null)" "<?php exit;"
+run "restauration préparée (3)" wpd migration restore "$ID"
+run "restauration avec le wp-config.php d'origine" php "$(ls "$DST"/avant_*_installer.php | head -1)" --url="$URL_DST" --db-host="$DB_HOST" --db-name=e2e_dst --db-user="$DB_USER" --db-pass="$DB_PASS" --db-action=replace --use-source-config --cleanup
+check "wp-config.php d'origine utilisé (réglage du serveur retiré)" "0" "$(grep -c E2E_REGLAGE_HEBERGEUR "$DST/wp-config.php")"
+check "wp-config.php d'origine : base de données saisie" "e2e_dst" "$(wpd config get DB_NAME)"
+check "site toujours en ligne avec le wp-config.php d'origine" "200" "$(curl -s -o /dev/null -w '%{http_code}' "$URL_DST/")"
 
 # --------------------------------------------------------------------------
 step "Sauvegardes planifiées"
