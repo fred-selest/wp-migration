@@ -393,9 +393,12 @@ includes/                        extension : sauvegarde, analyse, export SQL, ar
 installer/installer.php.tpl      modèle de l'installeur autonome
 assets/                          interface d'administration
 tests/run-tests.php              tests unitaires (sans WordPress)
+tests/e2e/run.sh                 test de bout en bout sur un vrai WordPress
 ```
 
 Tests : `php tests/run-tests.php`. La CI GitHub les exécute sur PHP 5.6 à 8.4.
+
+**Test de bout en bout** : `bash tests/e2e/run.sh` installe un vrai WordPress (WP-CLI et MySQL requis), le remplit (articles, médiathèque, réglage sérialisé, métadonnée JSON, utilisateurs), crée une sauvegarde, l'installe sur un second site avec l'installeur en ligne de commande, puis vérifie le résultat et exerce les outils : rechercher / remplacer et son annulation, synchronisation, reprise de réglages, comparaison, lien révoqué, restauration, sauvegardes planifiées. La CI le lance sur trois combinaisons PHP / WordPress (7.4 / 5.9, 8.1 / 6.4, 8.3 / dernière). Variables : `WP` (commande WP-CLI), `WP_VERSION`, `DB_HOST`, `DB_USER`, `DB_PASS`, `PORT_SRC`, `PORT_DST`, `KEEP=1` pour garder le dossier de travail.
 
 Format d'archive `.wpmig` : suite d'entrées `WMF1` (type, chemin, date, permissions) dont le contenu est découpé en blocs de 1 Mo (longueur, compression deflate facultative, CRC32), terminée par une signature `WMFE … WMFZ` contenant un résumé JSON. La première entrée est `__wpmig__/manifest.json` (description du site d'origine), la deuxième `__wpmig__/database.sql`.
 
