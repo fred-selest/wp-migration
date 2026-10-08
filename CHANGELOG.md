@@ -15,6 +15,9 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le pr
 - Commandes `wp migration s3`, `s3-test`, `s3-send`, `s3-list`, `s3-link`, `s3-prune`, `s3-cancel` et `wp migration schedule --s3`.
 - Le test de bout en bout vérifie le scénario S3 contre un émulateur qui contrôle les signatures (clé erronée refusée, archive lue en retour avec boto3 et comparée à l'octet près, rétention, sauvegarde planifiée, installation depuis un lien temporaire).
 
+### Corrigé
+- Ligne de commande : `--no-compress`, `--no-www`, `--no-variants` et `--no-adapt` étaient refusés par WP-CLI (paramètre inconnu) ; ils sont désormais pris en compte, et `--no-s3` désactive bien l'envoi S3 au lieu de l'activer.
+
 ## [1.14.0] - 2026-10-08
 
 ### Corrigé
