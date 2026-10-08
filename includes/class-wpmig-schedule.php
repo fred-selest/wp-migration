@@ -80,6 +80,7 @@ class WPMIG_Schedule {
 				'hour'      => 3,
 				'weekday'   => 1,
 				'type'      => 'full',
+				's3'        => false,
 				'notify'    => 'failure',
 				'email'     => '',
 				'salt'      => '',
@@ -104,6 +105,7 @@ class WPMIG_Schedule {
 			'hour'      => isset( $input['hour'] ) ? max( 0, min( 23, (int) $input['hour'] ) ) : 3,
 			'weekday'   => isset( $input['weekday'] ) ? max( 0, min( 6, (int) $input['weekday'] ) ) : 1,
 			'type'      => isset( $input['type'] ) && isset( self::types()[ $input['type'] ] ) ? $input['type'] : 'full',
+			's3'        => ! empty( $input['s3'] ),
 			'notify'    => isset( $input['notify'] ) && in_array( $input['notify'], array( 'never', 'failure', 'always' ), true ) ? $input['notify'] : 'failure',
 			'email'     => isset( $input['email'] ) ? sanitize_email( (string) $input['email'] ) : '',
 			'salt'      => $old['salt'],
@@ -220,7 +222,7 @@ class WPMIG_Schedule {
 	 */
 	public static function state() {
 		$state = get_option( self::STATE );
-		return array_merge( array( 'id' => '', 'started' => 0, 'last' => array() ), is_array( $state ) ? $state : array() );
+		return array_merge( array( 'id' => '', 'started' => 0, 'last' => array(), 's3' => 0 ), is_array( $state ) ? $state : array() );
 	}
 
 	/**
@@ -250,6 +252,7 @@ class WPMIG_Schedule {
 		);
 		$state['id']      = '';
 		$state['started'] = 0;
+		$state['s3']      = 0;
 		self::save_state( $state );
 		wp_clear_scheduled_hook( self::CONTINUE_HOOK );
 		self::notify( $state['last'] );
@@ -381,9 +384,29 @@ class WPMIG_Schedule {
 		}
 		$status = $package->data['status'];
 		if ( 'complete' === $status ) {
-			$size = ! empty( $package->data['sizes']['archive'] ) ? size_format( $package->data['sizes']['archive'], 1 ) : '';
-			self::finish( $state, true, $size, $state['id'] );
-			return array( 'status' => 'complete', 'progress' => 100, 'message' => 'Sauvegarde prête (' . $size . ').', 'id' => $state['id'] );
+			$size   = ! empty( $package->data['sizes']['archive'] ) ? size_format( $package->data['sizes']['archive'], 1 ) : '';
+			$remote = '';
+			$cfg    = self::settings();
+			if ( $cfg['s3'] && WPMIG_S3::configured() ) {
+				// The backup now goes to S3, a few parts per step, before the run is over.
+				if ( empty( $state['s3'] ) ) {
+					WPMIG_S3::start( $state['id'] );
+					$state['s3'] = 1;
+					self::save_state( $state );
+				}
+				$up = WPMIG_S3::step( $budget );
+				if ( 'running' === $up['status'] ) {
+					return array( 'status' => 'running', 'progress' => $up['progress'], 'message' => $up['message'], 'id' => $state['id'] );
+				}
+				if ( 'done' !== $up['status'] ) {
+					$message = 'Sauvegarde créée (' . $size . ') mais envoi vers S3 en échec : ' . $up['error'];
+					self::finish( $state, false, $message, $state['id'] );
+					return array( 'status' => 'error', 'progress' => 0, 'message' => $message, 'id' => $state['id'] );
+				}
+				$remote = ' — envoyée sur S3';
+			}
+			self::finish( $state, true, $size . $remote, $state['id'] );
+			return array( 'status' => 'complete', 'progress' => 100, 'message' => 'Sauvegarde prête (' . $size . ')' . $remote . '.', 'id' => $state['id'] );
 		}
 		if ( 'error' === $status ) {
 			$message = $package->data['error'] ? $package->data['error'] : 'Échec de la construction.';

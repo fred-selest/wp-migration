@@ -477,6 +477,12 @@
 	if ( list ) {
 		list.addEventListener( 'click', function ( e ) {
 			var target = e.target;
+			if ( target.getAttribute( 'data-s3-cancel' ) ) {
+				post( 'wpmig_s3_cancel' ).then( function () {
+					window.location.reload();
+				} );
+				return;
+			}
 			if ( target.getAttribute( 'data-restore-cancel' ) ) {
 				var holder = target.closest( 'tr' );
 				var owner = holder.hasAttribute( 'data-id' ) ? holder : holder.previousElementSibling;
@@ -533,6 +539,54 @@
 					target.disabled = false;
 				} ).catch( function ( err ) {
 					target.disabled = false;
+					window.alert( err.message );
+				} );
+				return;
+			}
+			if ( target.getAttribute( 'data-s3-send' ) ) {
+				target.disabled = true;
+				var s3row = document.createElement( 'tr' );
+				s3row.className = 'wpmig-transfer-row';
+				s3row.innerHTML = '<td colspan="5"><div class="wpmig-bar"><span style="width:3%"></span></div><p class="wpmig-msg">Envoi vers S3…</p><p><button type="button" class="button-link wpmig-danger" data-s3-cancel="1">Abandonner l\'envoi</button></p></td>';
+				row.parentNode.insertBefore( s3row, row.nextSibling );
+				var s3retries = 0;
+				var s3loop = function ( state ) {
+					s3retries = 0;
+					$( 'span', s3row ).style.width = Math.max( 3, state.progress || 0 ) + '%';
+					$( '.wpmig-msg', s3row ).textContent = state.message || '';
+					if ( state.status === 'running' ) {
+						post( 'wpmig_s3_step' ).then( s3loop ).catch( function ( err ) {
+							if ( err.retry && s3retries++ < 5 ) {
+								window.setTimeout( function () {
+									s3loop( state );
+								}, 3000 * s3retries );
+								return;
+							}
+							$( '.wpmig-msg', s3row ).innerHTML = '<span class="wpmig-warning-text">' + esc( err.message ) + '</span> Relancez « Envoyer vers S3 » pour reprendre.';
+							target.disabled = false;
+						} );
+						return;
+					}
+					if ( state.status === 'done' ) {
+						window.location.reload();
+						return;
+					}
+					$( '.wpmig-msg', s3row ).innerHTML = '<span class="wpmig-warning-text">' + esc( state.error || 'Envoi interrompu.' ) + '</span> Relancez « Envoyer vers S3 » pour reprendre.';
+					target.disabled = false;
+				};
+				post( 'wpmig_s3_start', { id: id } ).then( s3loop ).catch( function ( err ) {
+					target.disabled = false;
+					$( '.wpmig-msg', s3row ).innerHTML = '<span class="wpmig-warning-text">' + esc( err.message ) + '</span>';
+				} );
+				return;
+			}
+			if ( target.getAttribute( 'data-s3-links' ) ) {
+				post( 'wpmig_s3_links', { id: id } ).then( function ( l ) {
+					var lr = document.createElement( 'tr' );
+					lr.className = 'wpmig-transfer-row';
+					lr.innerHTML = '<td colspan="5"><div class="wpmig-transfer"><h3>Liens de téléchargement S3</h3><p>Valables jusqu\'au ' + esc( new Date( l.expires * 1000 ).toLocaleString() ) + '. <strong>Ne les partagez pas</strong> : ils donnent accès à la sauvegarde.</p><p>Sur le nouveau serveur :</p><pre class="wpmig-pre">curl -o installer.php \'' + esc( l.installer ) + '\'\nphp installer.php --source-url=\'' + esc( l.archive ) + '\'</pre></div></td>';
+					row.parentNode.insertBefore( lr, row.nextSibling );
+				} ).catch( function ( err ) {
 					window.alert( err.message );
 				} );
 				return;
@@ -1265,5 +1319,23 @@
 				$( '#wpmig-schedule-run' ).disabled = false;
 			} );
 		}
+	}
+
+	/* S3 storage: connection test. */
+	var s3 = document.getElementById( 'wpmig-s3' );
+	if ( s3 ) {
+		$( '#wpmig-s3-test' ).addEventListener( 'click', function () {
+			var button = this;
+			var panel = $( '#wpmig-s3-panel' );
+			button.disabled = true;
+			panel.innerHTML = '<p class="wpmig-msg">Test de la connexion…</p>';
+			post( 'wpmig_s3_test' ).then( function ( res ) {
+				button.disabled = false;
+				panel.innerHTML = '<div class="notice notice-success inline"><p><strong>Connexion réussie.</strong> ' + res.lines.map( esc ).join( ' ' ) + '</p></div>';
+			} ).catch( function ( err ) {
+				button.disabled = false;
+				panel.innerHTML = '<div class="notice notice-error inline"><p>' + esc( err.message ) + '</p></div>';
+			} );
+		} );
 	}
 }() );

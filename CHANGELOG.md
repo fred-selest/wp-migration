@@ -3,6 +3,18 @@
 Toutes les évolutions notables de WP Migration sont consignées ici.
 Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le projet respecte le [versionnage sémantique](https://semver.org/lang/fr/).
 
+## [1.15.0] - 2026-10-08
+
+### Ajouté
+- **Stockage S3** (Réglages → Stockage S3) : envoi des sauvegardes vers un stockage compatible S3 (Amazon S3, Infomaniak, Scaleway, OVHcloud, Wasabi, Backblaze B2, MinIO…), sans SDK : requêtes signées en AWS Signature V4, identiques à celles de la bibliothèque officielle (vérifié sur les exemples d'AWS et sur des cas contrôlés avec botocore).
+  - Envoi par morceaux de 8 Mo (multipart), reprenable après une coupure ou un arrêt brutal, empreinte de chaque morceau et de l'archive vérifiée.
+  - Bouton « Envoyer vers S3 » par sauvegarde, avec progression ; « Liens S3 » : liens temporaires de l'installeur et de l'archive, l'installeur téléchargeant l'archive directement depuis S3 (`--source-url`).
+  - Sauvegardes planifiées : option d'envoi automatique sur S3 ; l'exécution n'est réussie qu'une fois l'envoi terminé, un échec d'envoi est signalé.
+  - Conservation des N dernières sauvegardes sur S3 ; seuls les dossiers créés par WP Migration sont supprimés.
+  - Les clés ne figurent jamais dans les sauvegardes, et peuvent être définies dans `wp-config.php` (`WPMIG_S3_ACCESS_KEY`, `WPMIG_S3_SECRET_KEY`).
+- Commandes `wp migration s3`, `s3-test`, `s3-send`, `s3-list`, `s3-link`, `s3-prune`, `s3-cancel` et `wp migration schedule --s3`.
+- Le test de bout en bout vérifie le scénario S3 contre un émulateur qui contrôle les signatures (clé erronée refusée, archive lue en retour avec boto3 et comparée à l'octet près, rétention, sauvegarde planifiée, installation depuis un lien temporaire).
+
 ## [1.14.0] - 2026-10-08
 
 ### Corrigé
@@ -176,6 +188,7 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le pr
 - Protection de l'installeur par mot de passe.
 - Compatibilité WordPress 4.9 à 7.1 et PHP 5.6 à 8.4.
 
+[1.15.0]: https://github.com/fred-selest/wp-migration/releases/tag/v1.15.0
 [1.14.0]: https://github.com/fred-selest/wp-migration/releases/tag/v1.14.0
 [1.13.1]: https://github.com/fred-selest/wp-migration/releases/tag/v1.13.1
 [1.13.0]: https://github.com/fred-selest/wp-migration/releases/tag/v1.13.0

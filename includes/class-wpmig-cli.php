@@ -839,6 +839,12 @@ class WPMIG_CLI {
 	 * [--password=<password>]
 	 * : Installer password (8 characters or more).
 	 *
+	 * [--s3]
+	 * : Also send every scheduled backup to the S3 storage (see wp migration s3).
+	 *
+	 * [--no-s3]
+	 * : Stop sending scheduled backups to S3.
+	 *
 	 * [--notify=<notify>]
 	 * : failure, always or never.
 	 *
@@ -855,10 +861,11 @@ class WPMIG_CLI {
 	 */
 	public function schedule( $args, $assoc_args ) {
 		$settings = WPMIG_Schedule::settings();
-		$change   = array_intersect_key( $assoc_args, array_flip( array( 'enable', 'disable', 'frequency', 'hour', 'weekday', 'type', 'password', 'notify', 'email' ) ) );
+		$change   = array_intersect_key( $assoc_args, array_flip( array( 'enable', 'disable', 'frequency', 'hour', 'weekday', 'type', 'password', 'notify', 'email', 's3', 'no-s3' ) ) );
 		if ( $change ) {
 			$input = array_merge( $settings, array_intersect_key( $assoc_args, array_flip( array( 'frequency', 'hour', 'weekday', 'type', 'notify', 'email' ) ) ) );
 			$input['enabled'] = isset( $assoc_args['disable'] ) ? false : ( isset( $assoc_args['enable'] ) ? true : $settings['enabled'] );
+			$input['s3']      = isset( $assoc_args['no-s3'] ) ? false : ( isset( $assoc_args['s3'] ) ? true : $settings['s3'] );
 			if ( isset( $assoc_args['password'] ) ) {
 				$input['password'] = $assoc_args['password'];
 			}
@@ -875,6 +882,7 @@ class WPMIG_CLI {
 		WP_CLI::log( sprintf( 'Fréquence : %s, à %02d h (heure du site)%s', $settings['frequency'], $settings['hour'], 'weekly' === $settings['frequency'] ? ', jour ' . $settings['weekday'] : '' ) );
 		WP_CLI::log( 'Contenu : ' . WPMIG_Schedule::types()[ $settings['type'] ] );
 		WP_CLI::log( 'Mot de passe de l\'installeur : ' . ( '' !== $settings['hash'] ? 'défini' : 'non défini' ) );
+		WP_CLI::log( 'Envoi sur S3 : ' . ( $settings['s3'] ? 'oui' : 'non' ) );
 		WP_CLI::log( 'E-mail : ' . $settings['notify'] . ( '' !== $settings['email'] ? ' (' . $settings['email'] . ')' : '' ) );
 		WP_CLI::log( 'Prochaine sauvegarde : ' . ( $next ? wpmig_date( $next ) : '—' ) );
 		if ( ! empty( $state['last'] ) ) {
@@ -914,6 +922,199 @@ class WPMIG_CLI {
 		} else {
 			WP_CLI::error( $res['message'] ? $res['message'] : 'Aucune sauvegarde à exécuter.' );
 		}
+	}
+
+	/**
+	 * Show or change the S3 storage settings (Amazon S3 or any S3 compatible service).
+	 *
+	 * The access keys can also be defined in wp-config.php (WPMIG_S3_ACCESS_KEY, WPMIG_S3_SECRET_KEY),
+	 * which keeps them out of the database.
+	 *
+	 * ## OPTIONS
+	 *
+	 * [--endpoint=<url>]
+	 * : Service address, without path (https://s3.example.com).
+	 *
+	 * [--region=<region>]
+	 * : Region (default us-east-1).
+	 *
+	 * [--bucket=<bucket>]
+	 * : Bucket name.
+	 *
+	 * [--prefix=<folder>]
+	 * : Folder in the bucket (default wp-migration).
+	 *
+	 * [--access-key=<key>]
+	 * : Access key.
+	 *
+	 * [--secret-key=<key>]
+	 * : Secret key.
+	 *
+	 * [--vhost]
+	 * : Bucket in the host name (bucket.s3.example.com) instead of the path.
+	 *
+	 * [--keep=<n>]
+	 * : Backups kept on S3 (0 = no limit).
+	 *
+	 * ## EXAMPLES
+	 *
+	 *     wp migration s3 --endpoint=https://s3.example.com --region=fr-par --bucket=sauvegardes --access-key=AKIA... --secret-key=...
+	 *     wp migration s3
+	 *
+	 * @param array $args       Arguments.
+	 * @param array $assoc_args Options.
+	 */
+	public function s3( $args, $assoc_args ) {
+		$keys = array( 'endpoint', 'region', 'bucket', 'prefix', 'access-key', 'secret-key', 'vhost', 'keep' );
+		if ( array_intersect_key( $assoc_args, array_flip( $keys ) ) ) {
+			$old = WPMIG_S3::settings();
+			$in  = array_merge( $old, array_intersect_key( $assoc_args, array_flip( array( 'endpoint', 'region', 'bucket', 'prefix', 'keep' ) ) ) );
+			$in['access_key'] = isset( $assoc_args['access-key'] ) ? $assoc_args['access-key'] : $old['access_key'];
+			$in['secret_key'] = isset( $assoc_args['secret-key'] ) ? $assoc_args['secret-key'] : '';
+			$in['vhost']      = isset( $assoc_args['vhost'] ) ? true : $old['vhost'];
+			try {
+				WPMIG_S3::save_settings( $in );
+			} catch ( WPMIG_Exception $e ) {
+				WP_CLI::error( $e->getMessage() );
+			}
+			WP_CLI::success( 'Réglages enregistrés.' );
+		}
+		$s = WPMIG_S3::settings();
+		WP_CLI::log( 'Service    : ' . ( '' !== $s['endpoint'] ? $s['endpoint'] : '—' ) . ( $s['vhost'] ? ' (bucket dans le nom d\'hôte)' : ' (bucket dans le chemin)' ) );
+		WP_CLI::log( 'Région     : ' . $s['region'] );
+		WP_CLI::log( 'Bucket     : ' . ( '' !== $s['bucket'] ? $s['bucket'] : '—' ) . ' / ' . $s['prefix'] );
+		WP_CLI::log( 'Clés       : ' . ( '' !== $s['access_key'] ? $s['access_key'] : '—' ) . ' / ' . ( '' !== $s['secret_key'] ? '••••••••' : '—' ) );
+		WP_CLI::log( 'Conservées : ' . ( $s['keep'] ? $s['keep'] . ' sauvegardes' : 'toutes' ) );
+	}
+
+	/**
+	 * Try the S3 connection (list, write, read and delete a small file).
+	 *
+	 * @subcommand s3-test
+	 * @param array $args       Arguments.
+	 * @param array $assoc_args Options.
+	 */
+	public function s3_test( $args, $assoc_args ) {
+		try {
+			foreach ( WPMIG_S3::test() as $line ) {
+				WP_CLI::log( $line );
+			}
+		} catch ( WPMIG_Exception $e ) {
+			WP_CLI::error( $e->getMessage() );
+		}
+		WP_CLI::success( 'Connexion S3 réussie.' );
+	}
+
+	/**
+	 * Send a backup (archive and installer) to S3.
+	 *
+	 * ## OPTIONS
+	 *
+	 * <id>
+	 * : Backup identifier (see wp migration list).
+	 *
+	 * @subcommand s3-send
+	 * @param array $args       Arguments.
+	 * @param array $assoc_args Options.
+	 */
+	public function s3_send( $args, $assoc_args ) {
+		try {
+			WPMIG_S3::start( $args[0] );
+			$last  = '';
+			$state = WPMIG_S3::run(
+				function ( $s ) use ( &$last ) {
+					if ( $s['message'] !== $last ) {
+						WP_CLI::log( sprintf( '[%3d%%] %s', $s['progress'], $s['message'] ) );
+						$last = $s['message'];
+					}
+				}
+			);
+		} catch ( WPMIG_Exception $e ) {
+			WP_CLI::error( $e->getMessage() );
+			return;
+		}
+		if ( 'done' !== $state['status'] ) {
+			WP_CLI::error( $state['error'] . ' (relancez la commande pour reprendre, ou wp migration s3-cancel)' );
+		}
+		WP_CLI::success( $state['message'] );
+	}
+
+	/**
+	 * Forget an interrupted upload to S3 (and abort its parts).
+	 *
+	 * @subcommand s3-cancel
+	 * @param array $args       Arguments.
+	 * @param array $assoc_args Options.
+	 */
+	public function s3_cancel( $args, $assoc_args ) {
+		WPMIG_S3::cancel();
+		WP_CLI::success( 'Envoi abandonné.' );
+	}
+
+	/**
+	 * List the backups on S3.
+	 *
+	 * @subcommand s3-list
+	 * @param array $args       Arguments.
+	 * @param array $assoc_args Options.
+	 */
+	public function s3_list( $args, $assoc_args ) {
+		try {
+			$rows = WPMIG_S3::list_objects();
+		} catch ( WPMIG_Exception $e ) {
+			WP_CLI::error( $e->getMessage() );
+			return;
+		}
+		foreach ( $rows as $o ) {
+			WP_CLI::log( sprintf( '%-90s %10s  %s', $o['key'], size_format( $o['size'], 1 ), $o['modified'] ) );
+		}
+		WP_CLI::success( count( $rows ) . ' fichier(s).' );
+	}
+
+	/**
+	 * Print temporary download links of a backup sent to S3 (installer and archive).
+	 *
+	 * ## OPTIONS
+	 *
+	 * <id>
+	 * : Backup identifier.
+	 *
+	 * [--hours=<hours>]
+	 * : Validity (default 24, max 168).
+	 *
+	 * @subcommand s3-link
+	 * @param array $args       Arguments.
+	 * @param array $assoc_args Options.
+	 */
+	public function s3_link( $args, $assoc_args ) {
+		try {
+			$l = WPMIG_S3::links( $args[0], isset( $assoc_args['hours'] ) ? (int) $assoc_args['hours'] : 24 );
+		} catch ( WPMIG_Exception $e ) {
+			WP_CLI::error( $e->getMessage() );
+			return;
+		}
+		WP_CLI::log( 'Valables jusqu\'au ' . wpmig_date( $l['expires'] ) . ' :' );
+		WP_CLI::log( "\nSur le nouveau serveur :" );
+		WP_CLI::log( "  curl -o installer.php '" . $l['installer'] . "'" );
+		WP_CLI::log( "  php installer.php --source-url='" . $l['archive'] . "'" );
+		WP_CLI::success( 'Liens créés (ne les partagez pas : ils donnent accès à la sauvegarde).' );
+	}
+
+	/**
+	 * Delete the oldest backups on S3 (keeps the number set in wp migration s3 --keep).
+	 *
+	 * @subcommand s3-prune
+	 * @param array $args       Arguments.
+	 * @param array $assoc_args Options.
+	 */
+	public function s3_prune( $args, $assoc_args ) {
+		try {
+			$n = WPMIG_S3::prune();
+		} catch ( WPMIG_Exception $e ) {
+			WP_CLI::error( $e->getMessage() );
+			return;
+		}
+		WP_CLI::success( $n . ' sauvegarde(s) supprimée(s) sur S3.' );
 	}
 
 	/**

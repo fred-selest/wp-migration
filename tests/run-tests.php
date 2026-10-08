@@ -430,6 +430,7 @@ require dirname( __DIR__ ) . '/includes/class-wpmig-sync-db.php';
 require dirname( __DIR__ ) . '/includes/class-wpmig-sync.php';
 require dirname( __DIR__ ) . '/includes/class-wpmig-settings.php';
 require dirname( __DIR__ ) . '/includes/class-wpmig-compare.php';
+require dirname( __DIR__ ) . '/includes/class-wpmig-s3.php';
 require dirname( __DIR__ ) . '/includes/class-wpmig-schedule.php';
 check( 'empreinte d\'un contenu', 'shop_order|2026-09-29 05:25:04', WPMIG_Sync_Source::fingerprint( 'orders', array( 'post_type' => 'shop_order', 'post_date_gmt' => '2026-09-29 05:25:04' ) ) );
 check( 'empreinte d\'un client', 'client-1', WPMIG_Sync_Source::fingerprint( 'customers', array( 'user_login' => 'client-1' ) ) );
@@ -595,6 +596,65 @@ foreach ( $files as $file ) {
 	}
 }
 check( 'aucune variable $http_response_header dans le code', array(), $deprecated );
+
+echo "\nStockage S3 (signature V4)\n";
+$s3_access = 'AKIAIOSFODNN7EXAMPLE';
+$s3_secret = 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY';
+$s3_empty  = hash( 'sha256', '' );
+// Exemples publiés dans la documentation d'AWS.
+$sig = WPMIG_S3::sign( 'GET', '/test.txt', array(), array( 'host' => 'examplebucket.s3.amazonaws.com', 'range' => 'bytes=0-9', 'x-amz-content-sha256' => $s3_empty, 'x-amz-date' => '20130524T000000Z' ), $s3_empty, $s3_access, $s3_secret, 'us-east-1', '20130524T000000Z' );
+check( 'AWS : signature d\'une requête (en-tête Authorization)', 'f0e8bdb87c964420e857bd35b5d6ed310bd44f0170aba48dd91039c6036bdb41', $sig['signature'] );
+check( 'AWS : en-têtes signés', 'host;range;x-amz-content-sha256;x-amz-date', $sig['signed_headers'] );
+$q = array( 'X-Amz-Algorithm' => 'AWS4-HMAC-SHA256', 'X-Amz-Credential' => $s3_access . '/20130524/us-east-1/s3/aws4_request', 'X-Amz-Date' => '20130524T000000Z', 'X-Amz-Expires' => '86400', 'X-Amz-SignedHeaders' => 'host' );
+check( 'AWS : signature d\'une URL pré-signée', 'aeeed9bbccd4d02ee5c0109b86d86835f995330da4c265957d157751f604d404', WPMIG_S3::sign_query( 'GET', '/test.txt', $q, 'examplebucket.s3.amazonaws.com', $s3_secret, 'us-east-1', '20130524T000000Z' ) );
+// Cas calculés avec la bibliothèque officielle botocore (accents, espaces, esperluette, port, paramètres).
+foreach ( array(
+	array( 'stamp' => '20261008T114144Z', 'method' => 'GET', 'url' => 'http://127.0.0.1:9000/bucket', 'query' => array( 'list-type' => '2', 'max-keys' => '1', 'prefix' => 'wp migration/é' ), 'extra' => array(), 'sha' => 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855', 'auth' => 'AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20261008/eu-west-3/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=40ba8cf90f8a62f56546e7f0b8c44527a378e65642a4e2b7cbe47773c6461a52' ),
+	array( 'stamp' => '20261008T114144Z', 'method' => 'PUT', 'url' => 'http://127.0.0.1:9000/bucket/wp-migration/2026/%C3%A9%20%C3%A0%20%C3%BC%20%26%20x%2B%7E.txt', 'query' => array(), 'extra' => array( 'content-md5' => '8CNolFcm1fwqFOtXb3J2wA==' ), 'sha' => '2cb4b1431b84ec15d35ed83bb927e27e8967d75f4bcd9cc4b25c8d879ae23e18', 'auth' => 'AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20261008/eu-west-3/s3/aws4_request, SignedHeaders=content-md5;host;x-amz-content-sha256;x-amz-date, Signature=a043fc82492fa417c44919743906738f12f4dfd20dddf1957ba135cd772a6a5c' ),
+	array( 'stamp' => '20261008T114144Z', 'method' => 'PUT', 'url' => 'https://s3.example.fr/bucket/a/b.bin', 'query' => array( 'partNumber' => '3', 'uploadId' => 'ab/cd+ef==' ), 'extra' => array( 'content-md5' => 'OYUz1IER6fZksfZMsQxLYw==' ), 'sha' => '44f8354494a5ba03ba1792a8d3e9c534c47a9181980fde7a3f44b06ef2ae7c7f', 'auth' => 'AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20261008/eu-west-3/s3/aws4_request, SignedHeaders=content-md5;host;x-amz-content-sha256;x-amz-date, Signature=9ede2c9bd56f2627e56db4bdefecb006a04e4135fa15d05342a4b1c628b507ad' ),
+	array( 'stamp' => '20261008T114144Z', 'method' => 'POST', 'url' => 'https://s3.example.fr/bucket/a/b.bin', 'query' => array( 'uploads' => '' ), 'extra' => array( 'content-type' => 'application/octet-stream' ), 'sha' => 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855', 'auth' => 'AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20261008/eu-west-3/s3/aws4_request, SignedHeaders=content-type;host;x-amz-content-sha256;x-amz-date, Signature=464d77acd4f5ad65c050745b40a94aefdba28835b12f64a232d607b63190c259' ),
+	array( 'stamp' => '20261008T114144Z', 'method' => 'DELETE', 'url' => 'https://s3.example.fr:8443/bucket/a/b.bin', 'query' => array( 'uploadId' => 'XYZ' ), 'extra' => array(), 'sha' => 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855', 'auth' => 'AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20261008/eu-west-3/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=806f87bbf564594e0f9f6a340cd4da6866714f2e663243e2b332640f45021e1b' ),
+) as $i => $c ) {
+	$parts   = parse_url( $c['url'] );
+	$headers = array_merge( $c['extra'], array( 'host' => $parts['host'] . ( isset( $parts['port'] ) ? ':' . $parts['port'] : '' ), 'x-amz-content-sha256' => $c['sha'], 'x-amz-date' => $c['stamp'] ) );
+	$r       = WPMIG_S3::sign( $c['method'], $parts['path'], $c['query'], $headers, $c['sha'], 'AKIDEXAMPLE', 'SECRETEXAMPLEKEY123', 'eu-west-3', $c['stamp'] );
+	check( 'botocore : ' . $c['method'] . ' ' . urldecode( $parts['path'] ) . ( $c['query'] ? ' ?' . http_build_query( $c['query'] ) : '' ), $c['auth'], $r['authorization'] );
+}
+check( 'chemin encodé (accents, espaces, esperluette, +, ~)', 'dossier/%C3%A9%20%C3%A0%20%26%20x%2B~.txt', WPMIG_S3::encode_path( 'dossier/é à & x+~.txt' ) );
+check( 'requête canonique triée et encodée', 'a=1&b=%20&prefix=sites%2Fdev%2F&uploads=', WPMIG_S3::canonical_query( array( 'uploads' => '', 'prefix' => 'sites/dev/', 'b' => ' ', 'a' => '1' ) ) );
+
+// Réglages : validation (get_option / update_option simulés).
+$GLOBALS['__s3_opts'] = array();
+if ( ! function_exists( 'get_option' ) ) {
+	function get_option( $name, $default = false ) {
+		return isset( $GLOBALS['__s3_opts'][ $name ] ) ? $GLOBALS['__s3_opts'][ $name ] : $default;
+	}
+}
+if ( ! function_exists( 'update_option' ) ) {
+	function update_option( $name, $value, $autoload = null ) {
+		$GLOBALS['__s3_opts'][ $name ] = $value;
+		return true;
+	}
+}
+$saved = WPMIG_S3::save_settings( array( 'endpoint' => 'https://s3.exemple.fr/', 'region' => 'fr-par', 'bucket' => 'sauvegardes', 'prefix' => '/wp-migration/', 'access_key' => 'AKIA', 'secret_key' => 'secret-1', 'keep' => 7 ) );
+check( 'réglages : adresse sans barre finale', 'https://s3.exemple.fr', $saved['endpoint'] );
+check( 'réglages : dossier nettoyé', 'wp-migration', $saved['prefix'] );
+check( 'réglages : service configuré', true, WPMIG_S3::configured() );
+$saved = WPMIG_S3::save_settings( array( 'endpoint' => 'https://s3.exemple.fr', 'bucket' => 'sauvegardes', 'access_key' => 'AKIA', 'secret_key' => '' ) );
+check( 'réglages : clé secrète vide = inchangée', 'secret-1', $saved['secret_key'] );
+foreach ( array(
+	'adresse avec un chemin refusée' => array( 'endpoint' => 'https://s3.exemple.fr/chemin', 'bucket' => 'b' ),
+	'adresse sans protocole refusée' => array( 'endpoint' => 's3.exemple.fr', 'bucket' => 'b' ),
+	'bucket invalide refusé'         => array( 'endpoint' => 'https://s3.exemple.fr', 'bucket' => 'mauvais bucket!' ),
+	'dossier avec .. refusé'         => array( 'endpoint' => 'https://s3.exemple.fr', 'bucket' => 'bucket', 'prefix' => '../autre' ),
+) as $name => $input ) {
+	try {
+		WPMIG_S3::save_settings( $input );
+		check( $name, 'exception', 'acceptée' );
+	} catch ( WPMIG_Exception $e ) {
+		check( $name, 'exception', 'exception' );
+	}
+}
 
 echo "\n" . ( $count - $failures ) . '/' . $count . " tests réussis\n";
 exit( $failures ? 1 : 0 );

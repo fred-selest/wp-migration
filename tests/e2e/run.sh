@@ -255,6 +255,93 @@ run "sauvegarde planifiée exécutée" wpd migration schedule-run
 contains "dernière exécution réussie" "$(wpd migration schedule)" "réussie"
 check "événement planifié" "1" "$(wpd cron event list --format=csv | grep -c '^wpmig_scheduled_backup')"
 
+
+# --------------------------------------------------------------------------
+step "Stockage S3 (émulateur moto : signatures vérifiées)"
+MOTO="${MOTO_SERVER:-$(command -v moto_server || true)}"
+MOTO_PY="${MOTO_PYTHON:-python3}"
+if [ -z "$MOTO" ] || ! "$MOTO_PY" -c 'import boto3, moto' 2>/dev/null; then
+	echo "  (moto_server ou boto3 absent : étape ignorée ; pip install 'moto[server]' boto3)"
+else
+	PORT_S3=9100
+	PORT_S3_OPEN=9101
+	# Instance 1 : authentification SigV4 exigée (les trois premières actions servent à créer la clé).
+	INITIAL_NO_AUTH_ACTION_COUNT=3 "$MOTO" -H 127.0.0.1 -p "$PORT_S3" >"$WORK/moto1.log" 2>&1 &
+	PIDS+=("$!")
+	# Instance 2 : sans contrôle (moto ne sait pas vérifier les URL pré-signées).
+	"$MOTO" -H 127.0.0.1 -p "$PORT_S3_OPEN" >"$WORK/moto2.log" 2>&1 &
+	PIDS+=("$!")
+	for i in $(seq 1 40); do curl -s -o /dev/null "http://127.0.0.1:$PORT_S3/moto-api/" && curl -s -o /dev/null "http://127.0.0.1:$PORT_S3_OPEN/moto-api/" && break; sleep 0.5; done
+	KEYS=$("$MOTO_PY" - "$PORT_S3" "$PORT_S3_OPEN" <<'PY'
+import boto3, json, sys
+strict, open_ = sys.argv[1], sys.argv[2]
+iam = boto3.client('iam', endpoint_url=f'http://127.0.0.1:{strict}', region_name='us-east-1', aws_access_key_id='x', aws_secret_access_key='y')
+iam.create_user(UserName='backup')
+k = iam.create_access_key(UserName='backup')['AccessKey']
+iam.put_user_policy(UserName='backup', PolicyName='all', PolicyDocument=json.dumps({'Version': '2012-10-17', 'Statement': [{'Effect': 'Allow', 'Action': 's3:*', 'Resource': '*'}]}))
+for port, ak, sk in ((strict, k['AccessKeyId'], k['SecretAccessKey']), (open_, 'a', 'b')):
+    boto3.client('s3', endpoint_url=f'http://127.0.0.1:{port}', region_name='eu-west-3', aws_access_key_id=ak, aws_secret_access_key=sk).create_bucket(Bucket='sauvegardes', CreateBucketConfiguration={'LocationConstraint': 'eu-west-3'})
+print(k['AccessKeyId'], k['SecretAccessKey'])
+PY
+)
+	S3_ACCESS="${KEYS%% *}"
+	S3_SECRET="${KEYS##* }"
+	[ -n "$S3_ACCESS" ] && ok "émulateur S3 démarré (authentification exigée)" || ko "émulateur S3 démarré" "$(tail -3 "$WORK/moto1.log")"
+	s3py() { "$MOTO_PY" - "$@"; }
+	s3check() { # script python lisant ses arguments : endpoint accès secret
+		s3py "$@"
+	}
+
+	run "réglages S3 enregistrés" wpd migration s3 --endpoint="http://127.0.0.1:$PORT_S3" --region=eu-west-3 --bucket=sauvegardes --prefix= --access-key="$S3_ACCESS" --secret-key="$S3_SECRET" --keep=2
+	run "connexion S3 réussie" wpd migration s3-test
+	wpd migration s3 --secret-key=cle-secrete-erronee >/dev/null
+	OUT=$(wpd migration s3-test 2>&1 || true)
+	contains "mauvaise clé secrète refusée (signature vérifiée par le serveur)" "$OUT" "SignatureDoesNotMatch"
+	wpd migration s3 --secret-key="$S3_SECRET" >/dev/null
+	check "clé secrète absente de l'export de la base" "0" "$(wpd db export - 2>/dev/null | grep -c "$S3_SECRET")"
+
+	IDS=$(wpd migration list | awk 'NR>1 && $3=="complete" {print $1}' | sort | tail -3)
+	FIRST=$(echo "$IDS" | head -1)
+	for id in $IDS; do run "envoi de la sauvegarde $id" wpd migration s3-send "$id"; done
+	check "rétention : seules les 2 plus récentes restent sur S3" "2" "$(wpd migration s3-list | awk '{print $1}' | sed -E 's#^([0-9]{8}_[0-9]{6}_[a-f0-9]{12})/.*#\1#' | grep -E '^[0-9]{8}_' | sort -u | wc -l)"
+	LAST=$(echo "$IDS" | tail -1)
+	ARCH=$(ls "$DST"/wp-content/wpmig-backups/*_"$LAST"_archive.wpmig)
+	SAME=$(s3py "http://127.0.0.1:$PORT_S3" "$S3_ACCESS" "$S3_SECRET" "$LAST" "$ARCH" <<'PY'
+import boto3, hashlib, sys
+ep, ak, sk, bid, local = sys.argv[1:6]
+s3 = boto3.client('s3', endpoint_url=ep, region_name='eu-west-3', aws_access_key_id=ak, aws_secret_access_key=sk)
+key = [o['Key'] for o in s3.list_objects_v2(Bucket='sauvegardes').get('Contents', []) if o['Key'].startswith(bid + '/') and o['Key'].endswith('.wpmig')][0]
+etag = s3.head_object(Bucket='sauvegardes', Key=key)['ETag'].strip('"')
+body = s3.get_object(Bucket='sauvegardes', Key=key)['Body']
+h = hashlib.sha256()
+for chunk in iter(lambda: body.read(1 << 20), b''): h.update(chunk)
+same = h.hexdigest() == hashlib.sha256(open(local, 'rb').read()).hexdigest()
+print(('identique' if same else 'DIFFERENT') + ('|multipart' if '-' in etag else '|simple'))
+PY
+)
+	check "archive sur S3 identique au fichier local (sha256, lu par boto3)" "identique" "${SAME%%|*}"
+	contains "archive envoyée par morceaux (multipart)" "$SAME" "multipart"
+
+	# Sauvegarde planifiée envoyée sur S3.
+	run "planification avec envoi S3" wpd migration schedule --enable --frequency=daily --hour=4 --type=db --password='Planif-passw0rd' --notify=never --s3
+	run "sauvegarde planifiée envoyée sur S3" wpd migration schedule-run
+	contains "dernière exécution : envoyée sur S3" "$(wpd migration schedule)" "envoyée sur S3"
+	wpd migration schedule --no-s3 >/dev/null
+
+	# Liens temporaires et installation depuis S3 (instance sans contrôle).
+	wpd migration s3 --endpoint="http://127.0.0.1:$PORT_S3_OPEN" --access-key=a --secret-key=b >/dev/null
+	run "envoi vers l'instance ouverte" wpd migration s3-send "$LAST"
+	LINKS=$(wpd migration s3-link "$LAST" --hours=2)
+	INST_URL=$(printf '%s\n' "$LINKS" | grep -o "curl -o installer.php '[^']*'" | sed "s/curl -o installer.php '//; s/'$//")
+	ARCH_URL=$(printf '%s\n' "$LINKS" | grep -o "source-url='[^']*'" | sed "s/source-url='//; s/'$//")
+	mkdir -p "$WORK/s3-dl"
+	curl -s -o "$WORK/s3-dl/installer.php" "$INST_URL"
+	cmp -s "$WORK/s3-dl/installer.php" "$(ls "$DST"/wp-content/wpmig-backups/*_"$LAST"_installer.php)" && ok "installeur téléchargé par lien temporaire, identique" || ko "installeur téléchargé par lien temporaire"
+	OUT=$(cd "$WORK/s3-dl" && php -d error_reporting=-1 -d display_errors=1 installer.php --source-url="$ARCH_URL" --check 2>&1)
+	contains "installeur : archive récupérée depuis S3 et contrôlée" "$OUT" "Archive téléchargée et contrôlée"
+	absent "installeur : aucun avis de dépréciation" "$OUT" "Deprecated"
+fi
+
 # --------------------------------------------------------------------------
 printf '\n%d/%d vérifications réussies\n' $((COUNT - FAILURES)) "$COUNT"
 [ "$FAILURES" -eq 0 ]

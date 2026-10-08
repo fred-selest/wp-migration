@@ -30,13 +30,14 @@ class WPMIG_Admin {
 		add_action( 'wp_ajax_wpmig_transfer_link', array( __CLASS__, 'ajax_transfer_link' ) );
 		add_action( 'wp_ajax_wpmig_transfer_revoke', array( __CLASS__, 'ajax_transfer_revoke' ) );
 		add_action( 'wp_ajax_wpmig_import_prepare', array( __CLASS__, 'ajax_import_prepare' ) );
-		foreach ( array( 'sync_probe', 'sync_start', 'sync_step', 'sync_confirm', 'sync_undo', 'sync_dismiss', 'sync_link', 'sync_revoke', 'search_start', 'search_step', 'search_confirm', 'search_undo', 'search_dismiss', 'settings_list', 'settings_preview', 'settings_apply', 'settings_undo', 'compare_run', 'restore_prepare', 'restore_cancel', 'schedule_run', 'schedule_step' ) as $action ) {
+		foreach ( array( 'sync_probe', 'sync_start', 'sync_step', 'sync_confirm', 'sync_undo', 'sync_dismiss', 'sync_link', 'sync_revoke', 'search_start', 'search_step', 'search_confirm', 'search_undo', 'search_dismiss', 'settings_list', 'settings_preview', 'settings_apply', 'settings_undo', 'compare_run', 'restore_prepare', 'restore_cancel', 'schedule_run', 'schedule_step', 's3_test', 's3_start', 's3_step', 's3_cancel', 's3_links' ) as $action ) {
 			add_action( 'wp_ajax_wpmig_' . $action, array( __CLASS__, 'ajax_' . $action ) );
 		}
 		add_action( 'admin_post_wpmig_download', array( __CLASS__, 'download' ) );
 		add_action( 'admin_post_wpmig_cleanup_install', array( __CLASS__, 'cleanup_install' ) );
 		add_action( 'admin_post_wpmig_cleanup_settings', array( __CLASS__, 'cleanup_settings' ) );
 		add_action( 'admin_post_wpmig_schedule_save', array( __CLASS__, 'schedule_save' ) );
+		add_action( 'admin_post_wpmig_s3_save', array( __CLASS__, 's3_save' ) );
 		add_action( 'admin_post_wpmig_report_download', array( __CLASS__, 'report_download' ) );
 		add_action( 'admin_post_wpmig_report_delete', array( __CLASS__, 'report_delete' ) );
 		add_action( 'admin_post_wpmig_report_recheck', array( __CLASS__, 'report_recheck' ) );
@@ -507,6 +508,62 @@ class WPMIG_Admin {
 	}
 
 	/**
+	 * S3: try the connection.
+	 */
+	public static function ajax_s3_test() {
+		self::check_ajax();
+		try {
+			wp_send_json_success( array( 'lines' => WPMIG_S3::test() ) );
+		} catch ( Exception $e ) {
+			wp_send_json_error( array( 'message' => $e->getMessage() ) );
+		}
+	}
+
+	/**
+	 * S3: start sending a backup.
+	 */
+	public static function ajax_s3_start() {
+		self::check_ajax();
+		$id = isset( $_POST['id'] ) ? sanitize_text_field( wp_unslash( $_POST['id'] ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification
+		try {
+			WPMIG_S3::start( $id );
+			wp_send_json_success( WPMIG_S3::step( WPMIG_Plugin::time_budget() ) );
+		} catch ( Exception $e ) {
+			wp_send_json_error( array( 'message' => $e->getMessage() ) );
+		}
+	}
+
+	/**
+	 * S3: next part(s) of the upload.
+	 */
+	public static function ajax_s3_step() {
+		self::check_ajax();
+		wp_send_json_success( WPMIG_S3::step( WPMIG_Plugin::time_budget() ) );
+	}
+
+	/**
+	 * S3: abandon the upload.
+	 */
+	public static function ajax_s3_cancel() {
+		self::check_ajax();
+		WPMIG_S3::cancel();
+		wp_send_json_success();
+	}
+
+	/**
+	 * S3: temporary download links.
+	 */
+	public static function ajax_s3_links() {
+		self::check_ajax();
+		$id = isset( $_POST['id'] ) ? sanitize_text_field( wp_unslash( $_POST['id'] ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification
+		try {
+			wp_send_json_success( WPMIG_S3::links( $id, 24 ) );
+		} catch ( Exception $e ) {
+			wp_send_json_error( array( 'message' => $e->getMessage() ) );
+		}
+	}
+
+	/**
 	 * Close the search & replace panel.
 	 */
 	public static function ajax_search_dismiss() {
@@ -825,6 +882,7 @@ class WPMIG_Admin {
 				break;
 			case 'settings':
 				self::render_schedule();
+				self::render_s3();
 				self::render_cleanup();
 				self::render_about();
 				break;
@@ -1103,6 +1161,10 @@ class WPMIG_Admin {
 			echo '<td>' . esc_html( wpmig_date( $d['created'] ) ) . '</td>';
 			echo '<td>' . ( ! empty( $d['sizes']['archive'] ) ? esc_html( size_format( $d['sizes']['archive'], 1 ) ) : '—' ) . '</td>';
 			echo '<td>' . esc_html( isset( $labels[ $d['status'] ] ) ? $labels[ $d['status'] ] : $d['status'] );
+			$sent = 'complete' === $d['status'] ? WPMIG_S3::history() : array();
+			if ( isset( $sent[ $d['id'] ] ) ) {
+				echo '<br><span class="wpmig-transfer-active">Sur S3 depuis le ' . esc_html( wpmig_date( $sent[ $d['id'] ]['time'] ) ) . '</span>';
+			}
 			$prepared = 'complete' === $d['status'] ? WPMIG_Restore::prepared( $package ) : '';
 			if ( $prepared ) {
 				echo '<br><span class="wpmig-transfer-active">Restauration préparée : <a href="' . esc_url( $prepared ) . '">ouvrir l\'installeur</a> · <button type="button" class="button-link wpmig-danger" data-restore-cancel="1">annuler</button></span>';
@@ -1120,6 +1182,13 @@ class WPMIG_Admin {
 				echo '<a class="button button-primary" data-download="installer" href="#">Installeur</a> ';
 				echo '<button type="button" class="button" data-download="both">Les deux</button> ';
 				echo '<button type="button" class="button" data-transfer="1">Transfert direct</button> ';
+				if ( WPMIG_S3::configured() ) {
+					$on_s3 = WPMIG_S3::history();
+					echo '<button type="button" class="button" data-s3-send="1">' . ( isset( $on_s3[ $d['id'] ] ) ? 'Renvoyer vers S3' : 'Envoyer vers S3' ) . '</button> ';
+					if ( isset( $on_s3[ $d['id'] ] ) ) {
+						echo '<button type="button" class="button" data-s3-links="1">Liens S3</button> ';
+					}
+				}
 				if ( WPMIG_Restore::available( $package ) && current_user_can( 'install_plugins' ) && ! ( defined( 'DISALLOW_FILE_MODS' ) && DISALLOW_FILE_MODS ) ) {
 					echo '<button type="button" class="button" data-restore="1">Restaurer</button> ';
 				}
@@ -1406,6 +1475,35 @@ class WPMIG_Admin {
 	}
 
 	/**
+	 * Save the S3 settings.
+	 */
+	public static function s3_save() {
+		if ( ! current_user_can( self::CAP ) || ! isset( $_POST['_wpnonce'] ) || ! wp_verify_nonce( sanitize_text_field( wp_unslash( $_POST['_wpnonce'] ) ), 'wpmig_s3_save' ) ) {
+			wp_die( 'Accès refusé.', 403 );
+		}
+		$args = array( 'page' => self::SLUG, 'tab' => 'settings' );
+		try {
+			WPMIG_S3::save_settings(
+				array(
+					'endpoint'   => isset( $_POST['endpoint'] ) ? sanitize_text_field( wp_unslash( $_POST['endpoint'] ) ) : '',
+					'region'     => isset( $_POST['region'] ) ? sanitize_text_field( wp_unslash( $_POST['region'] ) ) : '',
+					'bucket'     => isset( $_POST['bucket'] ) ? sanitize_text_field( wp_unslash( $_POST['bucket'] ) ) : '',
+					'prefix'     => isset( $_POST['prefix'] ) ? sanitize_text_field( wp_unslash( $_POST['prefix'] ) ) : '',
+					'access_key' => isset( $_POST['access_key'] ) ? sanitize_text_field( wp_unslash( $_POST['access_key'] ) ) : '',
+					'secret_key' => isset( $_POST['secret_key'] ) ? (string) wp_unslash( $_POST['secret_key'] ) : '', // phpcs:ignore WordPress.Security.ValidatedSanitizedInput
+					'vhost'      => ! empty( $_POST['vhost'] ),
+					'keep'       => isset( $_POST['keep'] ) ? absint( $_POST['keep'] ) : 5,
+				)
+			);
+			$args['s3_saved'] = 1;
+		} catch ( Exception $e ) {
+			$args['s3_error'] = rawurlencode( $e->getMessage() );
+		}
+		wp_safe_redirect( add_query_arg( $args, admin_url( 'admin.php' ) ) . '#wpmig-s3' );
+		exit;
+	}
+
+	/**
 	 * Save the settings of the scheduled backups.
 	 */
 	public static function schedule_save() {
@@ -1421,6 +1519,7 @@ class WPMIG_Admin {
 					'hour'      => isset( $_POST['hour'] ) ? absint( $_POST['hour'] ) : 3,
 					'weekday'   => isset( $_POST['weekday'] ) ? absint( $_POST['weekday'] ) : 1,
 					'type'      => isset( $_POST['type'] ) ? sanitize_key( wp_unslash( $_POST['type'] ) ) : 'full',
+					's3'        => ! empty( $_POST['s3'] ),
 					'notify'    => isset( $_POST['notify'] ) ? sanitize_key( wp_unslash( $_POST['notify'] ) ) : 'failure',
 					'email'     => isset( $_POST['email'] ) ? sanitize_text_field( wp_unslash( $_POST['email'] ) ) : '',
 					'password'  => isset( $_POST['password'] ) ? (string) wp_unslash( $_POST['password'] ) : '', // phpcs:ignore WordPress.Security.ValidatedSanitizedInput
@@ -1652,6 +1751,45 @@ class WPMIG_Admin {
 	}
 
 	/**
+	 * S3 storage settings.
+	 */
+	private static function render_s3() {
+		$s = WPMIG_S3::settings();
+		// phpcs:disable WordPress.Security.NonceVerification -- display only.
+		?>
+		<div class="wpmig-card" id="wpmig-s3">
+			<h2>Stockage S3</h2>
+			<?php if ( isset( $_GET['s3_saved'] ) ) : ?>
+				<div class="notice notice-success inline"><p>Réglages enregistrés.</p></div>
+			<?php elseif ( isset( $_GET['s3_error'] ) ) : ?>
+				<div class="notice notice-error inline"><p><?php echo esc_html( sanitize_text_field( wp_unslash( $_GET['s3_error'] ) ) ); ?></p></div>
+			<?php endif; ?>
+			<p>Envoyez vos sauvegardes sur un <strong>stockage compatible S3</strong> (Amazon S3, Infomaniak, Scaleway, OVHcloud, Wasabi, Backblaze B2, MinIO…) : elles survivent à une panne de ce serveur. L'envoi se fait par morceaux de 8 Mo, reprend après une coupure et vérifie l'empreinte de chaque fichier. Les clés d'accès ne sont <strong>jamais incluses dans les sauvegardes</strong>.</p>
+			<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" class="wpmig-s3-form">
+				<input type="hidden" name="action" value="wpmig_s3_save">
+				<?php wp_nonce_field( 'wpmig_s3_save' ); ?>
+				<table class="form-table" role="presentation"><tbody>
+					<tr><th scope="row"><label for="wpmig-s3-endpoint">Adresse du service</label></th><td><input type="url" id="wpmig-s3-endpoint" name="endpoint" class="regular-text code" value="<?php echo esc_attr( $s['endpoint'] ); ?>" placeholder="https://s3.pub1.infomaniak.cloud" autocomplete="off"><p class="description">Sans chemin. Amazon S3 : <code>https://s3.eu-west-3.amazonaws.com</code>.</p></td></tr>
+					<tr><th scope="row"><label for="wpmig-s3-region">Région</label></th><td><input type="text" id="wpmig-s3-region" name="region" class="regular-text code" value="<?php echo esc_attr( $s['region'] ); ?>" placeholder="us-east-1" autocomplete="off"> <span class="description">celle indiquée par l'hébergeur (par exemple <code>eu-west-3</code>, <code>fr-par</code>, <code>us-east-1</code>).</span></td></tr>
+					<tr><th scope="row"><label for="wpmig-s3-bucket">Bucket</label></th><td><input type="text" id="wpmig-s3-bucket" name="bucket" class="regular-text code" value="<?php echo esc_attr( $s['bucket'] ); ?>" autocomplete="off"> dossier <input type="text" name="prefix" class="regular-text code" value="<?php echo esc_attr( $s['prefix'] ); ?>" aria-label="Dossier dans le bucket" autocomplete="off"></td></tr>
+					<tr><th scope="row"><label for="wpmig-s3-access">Clé d'accès</label></th><td><input type="text" id="wpmig-s3-access" name="access_key" class="regular-text code" value="<?php echo esc_attr( $s['access_key'] ); ?>" autocomplete="off" <?php echo defined( 'WPMIG_S3_ACCESS_KEY' ) ? 'disabled' : ''; ?>></td></tr>
+					<tr><th scope="row"><label for="wpmig-s3-secret">Clé secrète</label></th><td><input type="password" id="wpmig-s3-secret" name="secret_key" class="regular-text code" value="" autocomplete="new-password" placeholder="<?php echo esc_attr( '' !== $s['secret_key'] ? '(inchangée)' : '' ); ?>" <?php echo defined( 'WPMIG_S3_SECRET_KEY' ) ? 'disabled' : ''; ?>>
+						<p class="description"><?php echo defined( 'WPMIG_S3_ACCESS_KEY' ) || defined( 'WPMIG_S3_SECRET_KEY' ) ? 'Une clé est définie dans wp-config.php (WPMIG_S3_ACCESS_KEY, WPMIG_S3_SECRET_KEY).' : 'Pour garder les clés hors de la base de données, définissez WPMIG_S3_ACCESS_KEY et WPMIG_S3_SECRET_KEY dans wp-config.php.'; ?> Créez de préférence une clé réservée à ce bucket.</p></td></tr>
+					<tr><th scope="row">Options</th><td>
+						<label><input type="checkbox" name="vhost" value="1" <?php checked( $s['vhost'] ); ?>> Le bucket est dans le nom d'hôte (<code>bucket.s3.exemple.fr</code>) au lieu du chemin</label><br>
+						<label>Conserver les <input type="number" name="keep" min="0" max="1000" value="<?php echo esc_attr( $s['keep'] ); ?>" class="small-text"> dernières sauvegardes sur S3 (0 = toutes ; seuls les dossiers créés par WP Migration sont supprimés)</label>
+					</td></tr>
+				</tbody></table>
+				<p><button type="submit" class="button button-primary">Enregistrer</button>
+				<button type="button" class="button" id="wpmig-s3-test" <?php echo WPMIG_S3::configured() ? '' : 'disabled'; ?>>Tester la connexion</button></p>
+			</form>
+			<div id="wpmig-s3-panel"></div>
+		</div>
+		<?php
+		// phpcs:enable
+	}
+
+	/**
 	 * Scheduled backups.
 	 */
 	private static function render_schedule() {
@@ -1710,6 +1848,10 @@ class WPMIG_Admin {
 						<?php foreach ( WPMIG_Schedule::types() as $key => $label ) : ?>
 							<label><input type="radio" name="type" value="<?php echo esc_attr( $key ); ?>" <?php checked( $settings['type'], $key ); ?>> <?php echo esc_html( $label ); ?></label><br>
 						<?php endforeach; ?>
+					</td></tr>
+					<tr><th scope="row">Stockage S3</th><td>
+						<label><input type="checkbox" name="s3" value="1" <?php checked( ! empty( $settings['s3'] ) ); ?> <?php echo WPMIG_S3::configured() ? '' : 'disabled'; ?>> Envoyer aussi chaque sauvegarde planifiée sur le stockage S3</label>
+						<?php if ( ! WPMIG_S3::configured() ) : ?><p class="description">Configurez d'abord le <a href="#wpmig-s3">stockage S3</a> ci-dessous.</p><?php endif; ?>
 					</td></tr>
 					<tr><th scope="row"><label for="wpmig-sched-password">Mot de passe de l'installeur</label></th><td>
 						<input type="password" id="wpmig-sched-password" name="password" class="regular-text" autocomplete="new-password" placeholder="<?php echo esc_attr( '' !== $settings['hash'] ? '(inchangé)' : '8 caractères au moins' ); ?>">

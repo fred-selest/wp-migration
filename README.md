@@ -82,6 +82,10 @@ En un clic (sauvegarde complète ou base de données seule), ou avec l'assistant
 
 ![Sauvegardes planifiées](docs/screenshots/31-sauvegardes-planifiees.png)
 
+### Stockage S3 (onglet Réglages)
+
+![Stockage S3](docs/screenshots/34-stockage-s3.png)
+
 ### Nettoyage automatique des anciennes sauvegardes (onglet Réglages)
 
 ![Nettoyage automatique](docs/screenshots/14-nettoyage-automatique.png)
@@ -142,7 +146,7 @@ Le menu **WP Migration** s'ouvre sur une **page d'accueil** qui pose la question
 | **Recevoir un site** | remplacer ce site par une sauvegarde (FTP ou installeur) ou par un autre site, sans FTP, avec un lien de transfert |
 | **Synchronisation** | 1. autoriser la synchronisation (site en ligne), 2. récupérer les commandes et contenus (copie de travail), 3. reprendre des réglages précis (moyen de paiement, langues, widgets…), 4. comparer deux sites |
 | **Rechercher / Remplacer** | changer une adresse ou un texte dans toute la base de données |
-| **Réglages** | sauvegardes planifiées, nettoyage automatique des anciennes sauvegardes, version installée |
+| **Réglages** | sauvegardes planifiées, stockage S3, nettoyage automatique des anciennes sauvegardes, version installée |
 | **Aide** | les trois scénarios pas à pas |
 
 > Une **sauvegarde** est le couple archive `.wpmig` + `installer.php` : elle sert aussi bien à déménager le site qu'à en garder une copie pour revenir en arrière. (Dans les versions antérieures à 1.7.0, on parlait de « package » ; les commandes WP-CLI `wp migration build`, `list` et `delete` restent inchangées.)
@@ -333,6 +337,20 @@ Contrairement à `wp search-replace`, l'analyse détaillée, l'annulation et le 
 
 En SSH : `wp migration schedule` affiche l'état et accepte `--enable`, `--disable`, `--frequency=daily|weekly|monthly`, `--hour=3`, `--weekday=0..6`, `--type=full|nouploads|db`, `--password=…`, `--notify=failure|always|never`, `--email=…` ; `wp migration schedule-run` exécute une sauvegarde planifiée jusqu'à son terme.
 
+### Stockage S3
+
+**Réglages → Stockage S3** : les sauvegardes peuvent être envoyées sur un **stockage compatible S3** (Amazon S3, Infomaniak, Scaleway, OVHcloud, Wasabi, Backblaze B2, MinIO…). Elles survivent ainsi à une panne ou à la perte du serveur du site.
+
+- **Réglages** : adresse du service (sans chemin, par exemple `https://s3.pub1.infomaniak.cloud`), région, bucket, dossier, clé d'accès et clé secrète. **Tester la connexion** liste le bucket, puis écrit, relit et supprime un petit fichier. Le bucket est adressé par le chemin (`https://service/bucket/…`) ; cochez « dans le nom d'hôte » pour les services qui l'exigent (`https://bucket.service/…`).
+- **Les clés ne sont jamais dans les sauvegardes** (ni dans l'export de la base, ni dans le rapport). Pour les garder aussi hors de la base de données, définissez `WPMIG_S3_ACCESS_KEY` et `WPMIG_S3_SECRET_KEY` dans `wp-config.php`. Créez de préférence une clé réservée à ce bucket. La clé secrète n'est jamais réaffichée.
+- **Envoi** : bouton « Envoyer vers S3 » sur chaque sauvegarde (progression, reprise possible, abandon). L'archive part par morceaux de 8 Mo (envoi « multipart », jusqu'à plusieurs centaines de Go) : une coupure ne fait rien perdre, l'envoi reprend au dernier morceau. Chaque morceau est vérifié par son empreinte (`Content-MD5`), et l'empreinte finale de l'archive est comparée à celle calculée localement. L'installeur est envoyé avec elle. Le dossier de chaque sauvegarde est `<dossier>/<identifiant de la sauvegarde>/`.
+- **Sauvegardes planifiées** : la case « Envoyer aussi chaque sauvegarde planifiée sur le stockage S3 » (Réglages → Sauvegardes planifiées). L'exécution n'est réussie qu'une fois l'envoi terminé ; si l'envoi échoue, la sauvegarde locale existe et l'échec est signalé (e-mail et accueil).
+- **Conservation** : « Conserver les N dernières sauvegardes sur S3 ». Seuls les dossiers nommés comme une sauvegarde WP Migration sont supprimés : le reste du bucket n'est jamais touché.
+- **Récupérer une sauvegarde** : « Liens S3 » crée des liens temporaires (24 h) de l'installeur et de l'archive, sans partager vos clés. Sur le nouveau serveur : `curl -o installer.php '<lien de l'installeur>'` puis `php installer.php --source-url='<lien de l'archive>'` (ou collez le lien de l'archive dans « Lien de transfert » de l'installeur) ; l'archive est téléchargée directement depuis S3 vers le nouveau serveur.
+- **WP-CLI** : `wp migration s3` (afficher / régler : `--endpoint`, `--region`, `--bucket`, `--prefix`, `--access-key`, `--secret-key`, `--vhost`, `--keep`), `s3-test`, `s3-send <id>`, `s3-list`, `s3-link <id> [--hours=24]`, `s3-prune`, `s3-cancel`, et `wp migration schedule --s3`.
+
+L'extension signe elle-même ses requêtes (AWS Signature Version 4, sans SDK) : sa signature est identique à celle de la bibliothèque officielle d'Amazon (vérifié sur les exemples de la documentation AWS et sur des cas contrôlés avec `botocore`, accents et caractères spéciaux compris).
+
 ### Nettoyage automatique des anciennes sauvegardes
 
 Les sauvegardes occupent de l'espace sur l'hébergement et contiennent une copie complète du site (base de données comprise). L'extension les nettoie automatiquement **après chaque création et une fois par jour** (WP-Cron) :
@@ -410,7 +428,7 @@ tests/e2e/run.sh                 test de bout en bout sur un vrai WordPress
 
 Tests : `php tests/run-tests.php`. La CI GitHub les exécute sur PHP 5.6 à 8.4.
 
-**Test de bout en bout** : `bash tests/e2e/run.sh` installe un vrai WordPress (WP-CLI et MySQL requis), le remplit (articles, médiathèque, réglage sérialisé, métadonnée JSON, utilisateurs), crée une sauvegarde, l'installe sur un second site avec l'installeur en ligne de commande, puis vérifie le résultat et exerce les outils : rechercher / remplacer et son annulation, synchronisation, reprise de réglages, comparaison, lien révoqué, restauration, sauvegardes planifiées. La CI le lance sur trois combinaisons PHP / WordPress (7.4 / 5.9, 8.1 / 6.4, 8.3 / dernière). Variables : `WP` (commande WP-CLI), `WP_VERSION`, `DB_HOST`, `DB_USER`, `DB_PASS`, `PORT_SRC`, `PORT_DST`, `KEEP=1` pour garder le dossier de travail.
+**Test de bout en bout** : `bash tests/e2e/run.sh` (l'étape S3 utilise l'émulateur `moto` : `pip install 'moto[server]' boto3`, sinon elle est ignorée) installe un vrai WordPress (WP-CLI et MySQL requis), le remplit (articles, médiathèque, réglage sérialisé, métadonnée JSON, utilisateurs), crée une sauvegarde, l'installe sur un second site avec l'installeur en ligne de commande, puis vérifie le résultat et exerce les outils : rechercher / remplacer et son annulation, synchronisation, reprise de réglages, comparaison, lien révoqué, restauration, sauvegardes planifiées. La CI le lance sur trois combinaisons PHP / WordPress (7.4 / 5.9, 8.1 / 6.4, 8.3 / dernière). Variables : `WP` (commande WP-CLI), `WP_VERSION`, `DB_HOST`, `DB_USER`, `DB_PASS`, `PORT_SRC`, `PORT_DST`, `KEEP=1` pour garder le dossier de travail.
 
 Format d'archive `.wpmig` : suite d'entrées `WMF1` (type, chemin, date, permissions) dont le contenu est découpé en blocs de 1 Mo (longueur, compression deflate facultative, CRC32), terminée par une signature `WMFE … WMFZ` contenant un résumé JSON. La première entrée est `__wpmig__/manifest.json` (description du site d'origine), la deuxième `__wpmig__/database.sql`.
 
