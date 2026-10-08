@@ -1188,4 +1188,56 @@
 			$( '#wpmig-settings-form button[type="submit"]' ).click();
 		} );
 	}
+
+	/* Scheduled backups. */
+	var schedule = document.getElementById( 'wpmig-schedule' );
+	if ( schedule ) {
+		var schedulePanel = $( '#wpmig-schedule-panel' );
+		var scheduleRetries = 0;
+		$( '#wpmig-sched-frequency' ).addEventListener( 'change', function () {
+			$( '#wpmig-sched-weekday' ).hidden = this.value !== 'weekly';
+		} );
+		var scheduleShow = function ( state ) {
+			var html = '<div class="wpmig-bar"><span style="width:' + Math.max( 3, state.progress || 0 ) + '%"></span></div><p class="wpmig-msg">' + esc( state.message || 'Sauvegarde en cours…' ) + '</p>';
+			schedulePanel.innerHTML = html;
+		};
+		var scheduleLoop = function ( state ) {
+			scheduleRetries = 0;
+			if ( state.status === 'running' ) {
+				scheduleShow( state );
+				post( 'wpmig_schedule_step' ).then( scheduleLoop ).catch( function ( err ) {
+					if ( err.retry && scheduleRetries++ < 5 ) {
+						window.setTimeout( function () {
+							scheduleLoop( state );
+						}, 3000 * scheduleRetries );
+						return;
+					}
+					schedulePanel.innerHTML = '<div class="notice notice-error inline"><p>' + esc( err.message ) + '</p></div>';
+				} );
+				return;
+			}
+			if ( state.status === 'complete' ) {
+				schedulePanel.innerHTML = '<div class="notice notice-success inline"><p><strong>' + esc( state.message ) + '</strong> Elle figure dans la liste des sauvegardes.</p></div>';
+			} else if ( state.status === 'error' ) {
+				schedulePanel.innerHTML = '<div class="notice notice-error inline"><p>' + esc( state.message ) + '</p></div>';
+			} else {
+				schedulePanel.innerHTML = '<p>Aucune sauvegarde planifiée en cours.</p>';
+			}
+			$( '#wpmig-schedule-run' ).disabled = false;
+		};
+		$( '#wpmig-schedule-run' ).addEventListener( 'click', function () {
+			this.disabled = true;
+			schedulePanel.innerHTML = '<p class="wpmig-msg">Démarrage de la sauvegarde…</p>';
+			post( 'wpmig_schedule_run' ).then( scheduleLoop ).catch( function ( err ) {
+				$( '#wpmig-schedule-run' ).disabled = false;
+				schedulePanel.innerHTML = '<div class="notice notice-error inline"><p>' + esc( err.message ) + '</p></div>';
+			} );
+		} );
+		if ( schedule.getAttribute( 'data-running' ) ) {
+			$( '#wpmig-schedule-run' ).disabled = true;
+			post( 'wpmig_schedule_step' ).then( scheduleLoop ).catch( function () {
+				$( '#wpmig-schedule-run' ).disabled = false;
+			} );
+		}
+	}
 }() );

@@ -804,6 +804,112 @@ class WPMIG_CLI {
 	}
 
 	/**
+	 * Show or change the scheduled backups.
+	 *
+	 * Without option, shows the settings and the state. The installer password is
+	 * only kept as a salted hash.
+	 *
+	 * ## OPTIONS
+	 *
+	 * [--enable]
+	 * : Turn the scheduled backups on.
+	 *
+	 * [--disable]
+	 * : Turn the scheduled backups off.
+	 *
+	 * [--frequency=<frequency>]
+	 * : daily, weekly or monthly.
+	 *
+	 * [--hour=<hour>]
+	 * : Hour of the day (0-23, site time).
+	 *
+	 * [--weekday=<weekday>]
+	 * : Weekly: 0 (sunday) to 6.
+	 *
+	 * [--type=<type>]
+	 * : full, nouploads or db.
+	 *
+	 * [--password=<password>]
+	 * : Installer password (8 characters or more).
+	 *
+	 * [--notify=<notify>]
+	 * : failure, always or never.
+	 *
+	 * [--email=<email>]
+	 * : Address to warn (default: the administrator).
+	 *
+	 * ## EXAMPLES
+	 *
+	 *     wp migration schedule --enable --frequency=daily --hour=3 --password=secret-password
+	 *     wp migration schedule
+	 *
+	 * @param array $args       Arguments.
+	 * @param array $assoc_args Options.
+	 */
+	public function schedule( $args, $assoc_args ) {
+		$settings = WPMIG_Schedule::settings();
+		$change   = array_intersect_key( $assoc_args, array_flip( array( 'enable', 'disable', 'frequency', 'hour', 'weekday', 'type', 'password', 'notify', 'email' ) ) );
+		if ( $change ) {
+			$input = array_merge( $settings, array_intersect_key( $assoc_args, array_flip( array( 'frequency', 'hour', 'weekday', 'type', 'notify', 'email' ) ) ) );
+			$input['enabled'] = isset( $assoc_args['disable'] ) ? false : ( isset( $assoc_args['enable'] ) ? true : $settings['enabled'] );
+			if ( isset( $assoc_args['password'] ) ) {
+				$input['password'] = $assoc_args['password'];
+			}
+			try {
+				$settings = WPMIG_Schedule::save_settings( $input );
+			} catch ( WPMIG_Exception $e ) {
+				WP_CLI::error( $e->getMessage() );
+			}
+			WP_CLI::success( 'Réglages enregistrés.' );
+		}
+		$state = WPMIG_Schedule::state();
+		$next  = WPMIG_Schedule::next_scheduled();
+		WP_CLI::log( 'Sauvegardes planifiées : ' . ( $settings['enabled'] ? 'activées' : 'désactivées' ) );
+		WP_CLI::log( sprintf( 'Fréquence : %s, à %02d h (heure du site)%s', $settings['frequency'], $settings['hour'], 'weekly' === $settings['frequency'] ? ', jour ' . $settings['weekday'] : '' ) );
+		WP_CLI::log( 'Contenu : ' . WPMIG_Schedule::types()[ $settings['type'] ] );
+		WP_CLI::log( 'Mot de passe de l\'installeur : ' . ( '' !== $settings['hash'] ? 'défini' : 'non défini' ) );
+		WP_CLI::log( 'E-mail : ' . $settings['notify'] . ( '' !== $settings['email'] ? ' (' . $settings['email'] . ')' : '' ) );
+		WP_CLI::log( 'Prochaine sauvegarde : ' . ( $next ? wpmig_date( $next ) : '—' ) );
+		if ( ! empty( $state['last'] ) ) {
+			WP_CLI::log( sprintf( 'Dernière : %s — %s (%s)', wpmig_date( $state['last']['time'] ), $state['last']['ok'] ? 'réussie' : 'échec', $state['last']['text'] ) );
+		}
+		if ( '' !== $state['id'] ) {
+			WP_CLI::log( 'En cours : ' . $state['id'] );
+		}
+	}
+
+	/**
+	 * Run a scheduled backup now, until it is finished.
+	 *
+	 * Useful from a system cron (the WP-Cron chain is not needed).
+	 *
+	 * @subcommand schedule-run
+	 * @param array $args       Arguments.
+	 * @param array $assoc_args Options.
+	 */
+	public function schedule_run( $args, $assoc_args ) {
+		$last = '';
+		try {
+			$res = WPMIG_Schedule::run_now(
+				function ( $state ) use ( &$last ) {
+					if ( $state['message'] !== $last ) {
+						WP_CLI::log( sprintf( '[%3d%%] %s', $state['progress'], $state['message'] ) );
+						$last = $state['message'];
+					}
+				}
+			);
+		} catch ( WPMIG_Exception $e ) {
+			WP_CLI::error( $e->getMessage() );
+			return;
+		}
+		if ( 'complete' === $res['status'] ) {
+			WP_CLI::success( $res['message'] );
+		} else {
+			WP_CLI::error( $res['message'] ? $res['message'] : 'Aucune sauvegarde à exécuter.' );
+		}
+	}
+
+	/**
 	 * Print the result of a search and replace.
 	 *
 	 * @param array $state Public state.

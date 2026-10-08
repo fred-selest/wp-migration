@@ -430,6 +430,7 @@ require dirname( __DIR__ ) . '/includes/class-wpmig-sync-db.php';
 require dirname( __DIR__ ) . '/includes/class-wpmig-sync.php';
 require dirname( __DIR__ ) . '/includes/class-wpmig-settings.php';
 require dirname( __DIR__ ) . '/includes/class-wpmig-compare.php';
+require dirname( __DIR__ ) . '/includes/class-wpmig-schedule.php';
 check( 'empreinte d\'un contenu', 'shop_order|2026-09-29 05:25:04', WPMIG_Sync_Source::fingerprint( 'orders', array( 'post_type' => 'shop_order', 'post_date_gmt' => '2026-09-29 05:25:04' ) ) );
 check( 'empreinte d\'un client', 'client-1', WPMIG_Sync_Source::fingerprint( 'customers', array( 'user_login' => 'client-1' ) ) );
 check( 'empreinte d\'un commentaire', '2026-09-29 05:25:07|marie@example.org', WPMIG_Sync_Source::fingerprint( 'comments', array( 'post_date_gmt' => '2026-09-29 05:25:07', 'comment_author_email' => 'Marie@Example.org' ) ) );
@@ -552,6 +553,35 @@ check( 'compteurs différents : indicatif', 'info', $rows['Contenus|Articles pub
 check( 'compteurs identiques', 'same', $rows['Contenus|Commandes']['status'] );
 check( 'total des différences à examiner', 9, $cmp['summary']['diff'] + $cmp['summary']['only_here'] + $cmp['summary']['only_there'] );
 check( 'profil vide sans erreur', true, is_array( WPMIG_Compare::diff( array(), array() ) ) );
+
+echo "\nSauvegardes planifiées\n";
+$utc   = new DateTimeZone( 'UTC' );
+$paris = new DateTimeZone( 'Europe/Paris' );
+$at    = function ( $date, $tz ) {
+	$d = new DateTime( $date, $tz );
+	return $d->getTimestamp();
+};
+$show = function ( $ts, $tz ) {
+	$d = new DateTime( '@' . $ts );
+	$d->setTimezone( $tz );
+	return $d->format( 'Y-m-d H:i' );
+};
+$daily = array( 'frequency' => 'daily', 'hour' => 3, 'weekday' => 1 );
+check( 'quotidienne : le jour même si l\'heure n\'est pas passée', '2026-10-08 03:00', $show( WPMIG_Schedule::next_run( $daily, $at( '2026-10-08 01:30', $utc ), $utc ), $utc ) );
+check( 'quotidienne : lendemain si l\'heure est passée', '2026-10-09 03:00', $show( WPMIG_Schedule::next_run( $daily, $at( '2026-10-08 03:00', $utc ), $utc ), $utc ) );
+check( 'quotidienne : fuseau du site', '2026-10-09 03:00', $show( WPMIG_Schedule::next_run( $daily, $at( '2026-10-08 12:00', $paris ), $paris ), $paris ) );
+check( 'quotidienne : passage à l\'heure d\'hiver (heure locale conservée)', '2026-10-26 03:00', $show( WPMIG_Schedule::next_run( $daily, $at( '2026-10-25 12:00', $paris ), $paris ), $paris ) );
+$weekly = array( 'frequency' => 'weekly', 'hour' => 2, 'weekday' => 1 );
+check( 'hebdomadaire : prochain lundi (2026-10-08 est un jeudi)', '2026-10-12 02:00', $show( WPMIG_Schedule::next_run( $weekly, $at( '2026-10-08 12:00', $utc ), $utc ), $utc ) );
+check( 'hebdomadaire : le jour même avant l\'heure', '2026-10-12 02:00', $show( WPMIG_Schedule::next_run( $weekly, $at( '2026-10-12 01:00', $utc ), $utc ), $utc ) );
+check( 'hebdomadaire : semaine suivante après l\'heure', '2026-10-19 02:00', $show( WPMIG_Schedule::next_run( $weekly, $at( '2026-10-12 02:00', $utc ), $utc ), $utc ) );
+$sunday = array( 'frequency' => 'weekly', 'hour' => 23, 'weekday' => 0 );
+check( 'hebdomadaire : dimanche', '2026-10-11 23:00', $show( WPMIG_Schedule::next_run( $sunday, $at( '2026-10-08 12:00', $utc ), $utc ), $utc ) );
+$monthly = array( 'frequency' => 'monthly', 'hour' => 4, 'weekday' => 1 );
+check( 'mensuelle : le 1er du mois suivant', '2026-11-01 04:00', $show( WPMIG_Schedule::next_run( $monthly, $at( '2026-10-08 12:00', $utc ), $utc ), $utc ) );
+check( 'mensuelle : le 1er avant l\'heure', '2026-10-01 04:00', $show( WPMIG_Schedule::next_run( $monthly, $at( '2026-10-01 01:00', $utc ), $utc ), $utc ) );
+check( 'mensuelle : changement d\'année', '2027-01-01 04:00', $show( WPMIG_Schedule::next_run( $monthly, $at( '2026-12-15 10:00', $utc ), $utc ), $utc ) );
+check( 'types de sauvegarde', array( 'full', 'nouploads', 'db' ), array_keys( WPMIG_Schedule::types() ) );
 
 echo "\n" . ( $count - $failures ) . '/' . $count . " tests réussis\n";
 exit( $failures ? 1 : 0 );

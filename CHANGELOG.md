@@ -3,6 +3,15 @@
 Toutes les évolutions notables de WP Migration sont consignées ici.
 Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le projet respecte le [versionnage sémantique](https://semver.org/lang/fr/).
 
+## [1.12.0] - 2026-10-08
+
+### Ajouté
+- **Sauvegardes planifiées** (Réglages → Sauvegardes planifiées) : une sauvegarde automatique chaque jour, chaque semaine ou chaque mois, à l'heure du site choisie ; contenu complet, sans la médiathèque, ou base de données seule. Exécutée par WP-Cron en étapes courtes enchaînées, reprise après interruption, exécution bloquée abandonnée au bout de 6 heures. Bouton « Lancer une sauvegarde maintenant », prochain passage et dernier résultat affichés, échec signalé sur l'accueil.
+- Le mot de passe de l'installeur des sauvegardes planifiées (8 caractères au moins, obligatoire) n'est conservé que sous forme d'empreinte salée.
+- E-mail en cas d'échec, à chaque sauvegarde ou jamais, sans mot de passe ni lien d'accès dans le message.
+- Les anciennes sauvegardes sont supprimées par le nettoyage automatique existant.
+- `wp migration schedule` et `wp migration schedule-run`.
+
 ## [1.11.0] - 2026-10-08
 
 ### Ajouté
@@ -141,6 +150,7 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le pr
 - Protection de l'installeur par mot de passe.
 - Compatibilité WordPress 4.9 à 7.1 et PHP 5.6 à 8.4.
 
+[1.12.0]: https://github.com/fred-selest/wp-migration/releases/tag/v1.12.0
 [1.11.0]: https://github.com/fred-selest/wp-migration/releases/tag/v1.11.0
 [1.10.0]: https://github.com/fred-selest/wp-migration/releases/tag/v1.10.0
 [1.9.0]: https://github.com/fred-selest/wp-migration/releases/tag/v1.9.0
