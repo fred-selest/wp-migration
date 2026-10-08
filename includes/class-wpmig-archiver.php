@@ -58,6 +58,8 @@ class WPMIG_Archiver {
 			'name'        => $data['name'],
 			'created'     => gmdate( 'Y-m-d H:i:s' ),
 			'dump_started' => isset( $data['dump']['started'] ) ? $data['dump']['started'] : '',
+			// Largest single value of the dump (size, table, column), when above 1 MB.
+			'max_value'   => isset( $data['dump']['max_value'] ) ? $data['dump']['max_value'] : null,
 			// Figures of the translation links, compared with the new site by the consistency checks.
 			'multilingual' => WPMIG_Consistency::profile( WPMIG_Report::consistency_data() ),
 			'db_only'     => ! empty( $data['options']['db_only'] ),

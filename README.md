@@ -201,6 +201,18 @@ php installer.php --source-url='LIEN' --url=https://nouveau-domaine.fr --db-name
 
 Le téléchargement se fait par morceaux de 8 Mo (requêtes HTTP `Range`) : il reprend après une coupure, fonctionne avec cURL ou, à défaut, les flux PHP, puis l'archive est contrôlée (sauvegarde attendue, signature de fin, CRC de chaque bloc) avant toute modification. En ligne de commande sur le site d'origine : `wp migration transfer-link <id>` (`--hours=`, `--revoke`).
 
+### Gros sites et hébergements mutualisés
+
+La sauvegarde et l'installation avancent par étapes courtes, reprennent après une interruption et ne chargent jamais un site entier en mémoire. Éprouvé avec **128 Mo de mémoire PHP et 30 s par requête** (réglages typiques d'un mutualisé) sur un site de **900 Mo de base de données** (250 000 articles, 2,5 millions de métadonnées, table sans clé primaire) et **2,2 Go de médias** (25 000 fichiers, dont des vidéos de plusieurs centaines de Mo) : sauvegarde en une minute, installation complète et vérifiée (fichiers, lignes, sommes de contrôle).
+
+**Valeurs volumineuses dans la base** (réglages de constructeurs de pages, caches, données encodées…) :
+- À l'export, une ligne de plusieurs dizaines de Mo est écrite par tranches d'1 Mo, sans être assemblée en mémoire ; la taille de page s'adapte quand les lignes sont lourdes. Une seule valeur doit toutefois tenir en mémoire (comptez 2 à 3 fois sa taille).
+- À l'import, une ligne plus grande que le `max_allowed_packet` du serveur MySQL de destination (16 Mo chez beaucoup d'hébergeurs) est insérée en plusieurs morceaux, puis reconstituée.
+- **Limite de MySQL** : une *seule valeur* plus grande que `max_allowed_packet` ne peut pas être importée, quel que soit l'outil. L'installeur le dit **avant** l'import, à l'étape « Base de données » (« La base contient une valeur de 20 Mo (table …, colonne …) plus grande que le max_allowed_packet de ce serveur »), puis dans le rapport : la valeur est laissée **vide** (jamais tronquée ni mise à `NULL` sans avertissement) et le reste de la ligne est importé. Demandez à l'hébergeur d'augmenter `max_allowed_packet`, ou supprimez la donnée à la source.
+- Les tables sans clé primaire sont exportées et importées normalement ; seule une ligne trop grande pour un paquet y est ignorée (signalée), faute de clé pour la reconstituer.
+
+Le script `tests/e2e/large-site.sh` reproduit ce scénario (environ 10 Go de disque, 6 minutes).
+
 ### Rapport de migration
 
 À la fin de l'installation, l'installeur **contrôle la copie** puis enregistre un rapport dans la base du nouveau site. Il reste consultable dans **WP Migration → Rapport de migration** après la suppression des fichiers d'installation :

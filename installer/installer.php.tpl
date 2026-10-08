@@ -1079,6 +1079,18 @@ class WPMIG_Installer {
 		if ( $server['max_packet'] < 1048576 ) {
 			$result['messages'][] = array( 'warning', 'max_allowed_packet très faible (' . self::size( $server['max_packet'] ) . ') : les requêtes seront découpées.' );
 		}
+		if ( ! empty( $manifest['max_value']['size'] ) && $manifest['max_value']['size'] > $server['max_packet'] - 1024 ) {
+			$result['messages'][] = array(
+				'warning',
+				sprintf(
+					'La base contient une valeur de %s (table « %s », colonne « %s ») plus grande que le max_allowed_packet de ce serveur MySQL (%s) : elle ne pourra pas être importée et sera laissée vide. Faites augmenter max_allowed_packet par l\'hébergeur avant de continuer, ou poursuivez en acceptant cette perte.',
+					self::size( $manifest['max_value']['size'] ),
+					$manifest['max_value']['table'],
+					$manifest['max_value']['column'],
+					self::size( $server['max_packet'] )
+				)
+			);
+		}
 
 		// Privileges.
 		$test = 'wpmig_test_' . self::random_string( 6, true );

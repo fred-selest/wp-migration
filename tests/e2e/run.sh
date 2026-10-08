@@ -40,6 +40,7 @@ wpd() { $WP --path="$DST" "$@"; }
 
 cleanup() {
 	for pid in "${PIDS[@]:-}"; do [ -n "$pid" ] && kill "$pid" 2>/dev/null; done
+	[ -n "${ORIG_PACKET:-}" ] && mysql_cmd -e "SET GLOBAL max_allowed_packet=$ORIG_PACKET" 2>/dev/null
 	mysql_cmd -e "DROP DATABASE IF EXISTS e2e_src; DROP DATABASE IF EXISTS e2e_dst;" 2>/dev/null
 	if [ -z "${KEEP:-}" ]; then rm -rf "$WORK"; else echo "Dossier conservé : $WORK"; fi
 }
@@ -105,6 +106,24 @@ SRC_POSTS=$(wps post list --post_type=post --post_status=publish --format=count)
 SRC_USERS=$(wps user list --format=count)
 check "source : deux articles publiés (« Hello world » et « Bonjour »)" "2" "$SRC_POSTS"
 
+
+# --------------------------------------------------------------------------
+step "Valeurs volumineuses (max_allowed_packet ramené à 16 Mo)"
+ORIG_PACKET=$(mysql_cmd -N -e "SELECT @@global.max_allowed_packet")
+mysql_cmd -e "SET GLOBAL max_allowed_packet=134217728" 2>/dev/null
+mysql_cmd --max_allowed_packet=134217728 e2e_src <<'SQL'
+CREATE TABLE wp_e2e_geant (id INT PRIMARY KEY, a LONGBLOB, b LONGTEXT, c LONGBLOB) ENGINE=InnoDB;
+-- ligne de plus de 20 Mo dont chaque valeur tient dans un paquet de 16 Mo : insérée par morceaux
+INSERT INTO wp_e2e_geant VALUES (1, REPEAT(CHAR(200), 7*1024*1024), REPEAT('texte http://127.0.0.1:8101/x ', 230000), REPEAT(CHAR(65), 7*1024*1024));
+-- une valeur de 20 Mo : plus grande que le paquet, signalée et laissée vide
+INSERT INTO wp_e2e_geant VALUES (2, REPEAT(CHAR(201), 20*1024*1024), 'petit', 'petit');
+SQL
+mysql_cmd -e "SET GLOBAL max_allowed_packet=16777216"
+GEANT_A=$(mysql_cmd -N e2e_src -e "SELECT MD5(a) FROM wp_e2e_geant WHERE id=1")
+GEANT_C=$(mysql_cmd -N e2e_src -e "SELECT MD5(c) FROM wp_e2e_geant WHERE id=1")
+GEANT_B=$(mysql_cmd -N e2e_src -e "SELECT MD5(REPLACE(b,'8101','8102')) FROM wp_e2e_geant WHERE id=1")
+[ -n "$GEANT_A" ] && ok "valeurs volumineuses créées sur la source" || ko "valeurs volumineuses créées sur la source"
+
 # --------------------------------------------------------------------------
 step "Sauvegarde du site source"
 run "sauvegarde créée" wps migration build --name=e2e --password="$INSTALLER_PASSWORD"
@@ -121,6 +140,13 @@ mysql_cmd -e "DROP DATABASE IF EXISTS e2e_dst; CREATE DATABASE e2e_dst CHARACTER
 cp "$ARCHIVE" "$INSTALLER" "$DST/"
 run "installation terminée" php "$DST/$(basename "$INSTALLER")" --url="$URL_DST" --db-host="$DB_HOST" --db-name=e2e_dst --db-user="$DB_USER" --db-pass="$DB_PASS" --db-action=replace --cleanup
 contains "installation signalée terminée" "$LAST" "Terminé"
+contains "valeur plus grande que max_allowed_packet signalée par l'installeur" "$LAST" "plus grande que max_allowed_packet"
+check "ligne volumineuse : colonne a intacte" "$GEANT_A" "$(mysql_cmd -N e2e_dst -e 'SELECT MD5(a) FROM wp_e2e_geant WHERE id=1')"
+check "ligne volumineuse : colonne c intacte" "$GEANT_C" "$(mysql_cmd -N e2e_dst -e 'SELECT MD5(c) FROM wp_e2e_geant WHERE id=1')"
+check "ligne volumineuse : texte avec adresses remplacées" "$GEANT_B" "$(mysql_cmd -N e2e_dst -e "SELECT MD5(b) FROM wp_e2e_geant WHERE id=1")"
+check "valeur de 20 Mo : laissée vide, pas NULL" "0" "$(mysql_cmd -N e2e_dst -e 'SELECT IFNULL(LENGTH(a),-1) FROM wp_e2e_geant WHERE id=2')"
+check "valeur de 20 Mo : le reste de la ligne est importé" "petit" "$(mysql_cmd -N e2e_dst -e 'SELECT b FROM wp_e2e_geant WHERE id=2')"
+
 [ -z "$(ls "$DST"/*_installer.php "$DST"/*.wpmig 2>/dev/null)" ] && ok "installeur et archive supprimés" || ko "installeur et archive supprimés"
 serve "$DST" "$PORT_DST"
 

@@ -23,6 +23,11 @@ class WPMIG_DB_Exporter {
 	const STATEMENT_SIZE = 524288;
 
 	/**
+	 * A row larger than this is written value by value, in slices, instead of being assembled in memory.
+	 */
+	const BIG_ROW = 2097152;
+
+	/**
 	 * Package.
 	 *
 	 * @var WPMIG_Package
@@ -219,6 +224,13 @@ class WPMIG_DB_Exporter {
 			if ( $finished ) {
 				$state['rows']           += $state['table']['done'];
 				$state['counts'][ $name ] = (int) $state['table']['done'];
+				if ( ! empty( $state['table']['maxv'] ) && $state['table']['maxv'] > ( isset( $state['max_value']['size'] ) ? $state['max_value']['size'] : 0 ) ) {
+					$state['max_value'] = array(
+						'size'   => (int) $state['table']['maxv'],
+						'table'  => $name,
+						'column' => $state['table']['maxc'],
+					);
+				}
 				$state['table'] = null;
 				$state['index']++;
 			}
@@ -396,7 +408,36 @@ class WPMIG_DB_Exporter {
 		$binary = array_flip( $table['binary'] );
 		$pk_idx = $table['pk'] ? array_search( $table['pk'], $table['cols'], true ) : false;
 		$batch  = '';
-		foreach ( $rows as $row ) {
+		$bytes  = 0;
+		$count  = count( $rows );
+		foreach ( $rows as $r => $row ) {
+			$raw = 0;
+			foreach ( $row as $i => $value ) {
+				if ( null === $value ) {
+					continue;
+				}
+				$n    = strlen( $value );
+				$raw += $n;
+				// Largest single value: a destination whose max_allowed_packet is smaller cannot import it.
+				if ( $n > 1048576 && $n > ( isset( $table['maxv'] ) ? $table['maxv'] : 0 ) ) {
+					$table['maxv'] = $n;
+					$table['maxc'] = isset( $table['cols'][ $i ] ) ? $table['cols'][ $i ] : '';
+				}
+			}
+			$bytes += $raw;
+			if ( false !== $pk_idx ) {
+				$table['last'] = $row[ $pk_idx ];
+			}
+			if ( $raw > self::BIG_ROW ) {
+				// Too big to be assembled: what is waiting is written, then the row goes out in slices.
+				if ( '' !== $batch ) {
+					$this->write( $fh, $head . $batch . ";\n" );
+					$batch = '';
+				}
+				$this->write_big_row( $fh, $head, $row, $bits, $binary );
+				$rows[ $r ] = null;
+				continue;
+			}
 			$values = array();
 			foreach ( $row as $i => $value ) {
 				if ( null === $value ) {
@@ -415,17 +456,61 @@ class WPMIG_DB_Exporter {
 				$batch = '';
 			}
 			$batch .= ( '' === $batch ? '' : ',' ) . $tuple;
-			if ( false !== $pk_idx ) {
-				$table['last'] = $row[ $pk_idx ];
-			}
 		}
 		if ( '' !== $batch ) {
 			$this->write( $fh, $head . $batch . ";\n" );
 		}
-		$count           = count( $rows );
+		$used            = (int) $table['limit'];
 		$table['done']  += $count;
 		$table['offset'] += $count;
-		return $count < $table['limit'];
+		// Heavy pages: fewer rows next time, so that a few huge rows never pile up in memory.
+		if ( $bytes > 8 * 1048576 && $table['limit'] > 1 ) {
+			$table['limit'] = max( 1, (int) ( $table['limit'] / 2 ) );
+		}
+		return $count < $used;
+	}
+
+	/**
+	 * Write one very large row without assembling it: head, then every value in slices.
+	 * (Escaping and hexadecimal encoding work byte by byte, so slices are safe.)
+	 *
+	 * @param resource $fh     Dump handle.
+	 * @param string   $head   INSERT head.
+	 * @param array    $row    Values.
+	 * @param array    $bits   BIT columns (flipped).
+	 * @param array    $binary Binary columns (flipped).
+	 * @throws WPMIG_Exception On write error.
+	 */
+	private function write_big_row( $fh, $head, array $row, array $bits, array $binary ) {
+		$this->write( $fh, $head . '(' );
+		$last = count( $row ) - 1;
+		foreach ( $row as $i => $value ) {
+			if ( null === $value ) {
+				$this->write( $fh, 'NULL' );
+			} elseif ( isset( $bits[ $i ] ) ) {
+				$this->write( $fh, $this->number( $value ) );
+			} elseif ( isset( $binary[ $i ] ) ) {
+				if ( '' === $value ) {
+					$this->write( $fh, "''" );
+				} else {
+					$this->write( $fh, '0x' );
+					for ( $pos = 0, $len = strlen( $value ); $pos < $len; $pos += 1048576 ) {
+						$this->write( $fh, bin2hex( substr( $value, $pos, 1048576 ) ) );
+					}
+				}
+			} else {
+				$this->write( $fh, "'" );
+				for ( $pos = 0, $len = strlen( $value ); $pos < $len; $pos += 1048576 ) {
+					$this->write( $fh, WPMIG_SQL::escape( substr( $value, $pos, 1048576 ) ) );
+				}
+				$this->write( $fh, "'" );
+			}
+			$row[ $i ] = null;
+			if ( $i !== $last ) {
+				$this->write( $fh, ',' );
+			}
+		}
+		$this->write( $fh, ");\n" );
 	}
 
 	/**
