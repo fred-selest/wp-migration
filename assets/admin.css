@@ -64,6 +64,11 @@
 .wpmig .wpmig-settings-list{margin:8px 0}.wpmig .wpmig-settings-list .num{text-align:right}
 .wpmig .wpmig-changes{list-style:disc;padding-left:20px;max-height:220px;overflow:auto;margin:6px 0 0}
 .wpmig .wpmig-settings-plan td{vertical-align:top}
+.wpmig .wpmig-badge-cmp-same{background:#8c8f94}.wpmig .wpmig-badge-cmp-diff{background:#dba617}.wpmig .wpmig-badge-cmp-only_here,.wpmig .wpmig-badge-cmp-only_there{background:#d63638}.wpmig .wpmig-badge-cmp-info{background:#2271b1}
+.wpmig .wpmig-compare-table{margin:6px 0 16px}.wpmig .wpmig-compare-table td{vertical-align:top;word-break:break-word}
+.wpmig #wpmig-compare-panel:not(.wpmig-compare-showall) .wpmig-compare-same,.wpmig #wpmig-compare-panel:not(.wpmig-compare-showall) .wpmig-compare-same-only{display:none}
+.wpmig #wpmig-compare-panel.wpmig-compare-showall .wpmig-compare-allsame{display:none}
+.wpmig .wpmig-compare-allsame{color:#50575e;margin:4px 0 14px}
 @media (max-width:782px){.wpmig .wpmig-actions{justify-content:flex-start}}
 /* Tabs and home */
 .wpmig .wpmig-tabs{margin:12px 0 0;max-width:1100px}

@@ -1104,4 +1104,59 @@
 			} );
 		} );
 	}
+
+	/* Comparison with another site. */
+	var compare = document.getElementById( 'wpmig-compare' );
+	if ( compare ) {
+		var compareForm = $( '#wpmig-compare-form' );
+		var comparePanel = $( '#wpmig-compare-panel' );
+		var compareStatus = { same: 'Identique', diff: 'Différent', only_here: 'Seulement ici', only_there: 'Seulement là-bas', info: 'À titre indicatif' };
+		var compareRender = function ( res ) {
+			var s = res.summary;
+			var html = '<h3>Résultat</h3><p>Autre site : <code>' + esc( res.source ) + '</code>. <strong>' + esc( s.diff + s.only_here + s.only_there ) + '</strong> différence(s) à examiner, ' + esc( s.info ) + ' à titre indicatif, ' + esc( s.same ) + ' identique(s).</p>';
+			html += '<p><label><input type="checkbox" id="wpmig-compare-all"> Afficher aussi les lignes identiques</label></p>';
+			res.sections.forEach( function ( section ) {
+				var differing = section.rows.filter( function ( row ) {
+					return row.status !== 'same';
+				} ).length;
+				html += '<h4>' + esc( section.title ) + '</h4>' + ( differing ? '' : '<p class="wpmig-compare-allsame">Identique (' + esc( section.rows.length ) + ' élément(s)).</p>' ) + '<table class="widefat striped wpmig-compare-table' + ( differing ? '' : ' wpmig-compare-same-only' ) + '"><thead><tr><th>Élément</th><th>Ce site</th><th>Autre site</th><th>État</th></tr></thead><tbody>';
+				section.rows.forEach( function ( row ) {
+					var pick = row.option && ( row.status === 'diff' || row.status === 'only_there' ) ? ' <button type="button" class="button-link" data-compare-pick="' + esc( row.option ) + '">Reprendre</button>' : '';
+					html += '<tr class="wpmig-compare-' + esc( row.status ) + '"><td>' + esc( row.label ) + '</td><td>' + ( row.here === '' ? '<em>absent</em>' : esc( row.here ) ) + '</td><td>' + ( row.there === '' ? '<em>absent</em>' : esc( row.there ) ) + '</td><td><span class="wpmig-badge wpmig-badge-cmp-' + esc( row.status ) + '">' + esc( compareStatus[ row.status ] ) + '</span>' + pick + '</td></tr>';
+				} );
+				html += '</tbody></table>';
+			} );
+			comparePanel.innerHTML = html;
+			comparePanel.classList.remove( 'wpmig-compare-showall' );
+		};
+		compareForm.addEventListener( 'submit', function ( e ) {
+			e.preventDefault();
+			var button = $( 'button[type="submit"]', compareForm );
+			button.disabled = true;
+			comparePanel.innerHTML = '<p class="wpmig-msg">Lecture des deux sites…</p>';
+			post( 'wpmig_compare_run', { link: $( '#wpmig-compare-link' ).value } ).then( function ( res ) {
+				button.disabled = false;
+				compareRender( res );
+			} ).catch( function ( err ) {
+				button.disabled = false;
+				comparePanel.innerHTML = '<div class="notice notice-error inline"><p>' + esc( err.message ) + '</p></div>';
+			} );
+		} );
+		compare.addEventListener( 'change', function ( e ) {
+			if ( e.target.id === 'wpmig-compare-all' ) {
+				comparePanel.classList.toggle( 'wpmig-compare-showall', e.target.checked );
+			}
+		} );
+		compare.addEventListener( 'click', function ( e ) {
+			var option = e.target.getAttribute( 'data-compare-pick' );
+			var settingsLink = $( '#wpmig-settings-link' );
+			if ( ! option || ! settingsLink ) {
+				return;
+			}
+			settingsLink.value = $( '#wpmig-compare-link' ).value;
+			$( '#wpmig-settings-q' ).value = option;
+			$( '#wpmig-settings' ).scrollIntoView();
+			$( '#wpmig-settings-form button[type="submit"]' ).click();
+		} );
+	}
 }() );
