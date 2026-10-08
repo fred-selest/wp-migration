@@ -3,6 +3,17 @@
 Toutes les évolutions notables de WP Migration sont consignées ici.
 Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le projet respecte le [versionnage sémantique](https://semver.org/lang/fr/).
 
+## [1.14.0] - 2026-10-08
+
+### Corrigé
+- **Gros sites sur hébergement mutualisé** : testé à grande échelle (900 Mo de base de données, 2,2 Go de médias, 25 000 fichiers) avec 128 Mo de mémoire PHP et un `max_allowed_packet` de 16 Mo. Deux défauts réels en sont sortis :
+  - **L'export et l'import s'effondraient** (mémoire épuisée) sur une ligne de plusieurs dizaines de Mo, parce qu'elle était gardée en plusieurs copies. Elle est maintenant écrite par tranches d'1 Mo à l'export, et l'import ne conserve plus qu'une copie ; la taille des pages d'export s'adapte quand les lignes sont lourdes.
+  - **Une ligne plus grande que le `max_allowed_packet` de la destination faisait échouer l'installation** ; elle est maintenant insérée en plusieurs morceaux (INSERT puis UPDATE ... CONCAT par la clé primaire) et reconstituée à l'octet près.
+- **Perte de données silencieuse évitée** : MySQL limite aussi le résultat de CONCAT à `max_allowed_packet`, si bien qu'une valeur unique plus grande que ce réglage devenait `NULL` sans erreur. Elle est désormais laissée vide **avec une erreur explicite** dans le rapport, et l'installeur prévient avant l'import (taille, table et colonne de la plus grosse valeur, enregistrées dans la sauvegarde).
+
+### Ajouté
+- `tests/e2e/large-site.sh` : montée en charge manuelle (base de 900 Mo, 2,2 Go de médias, mémoire et paquet limités). Le test de bout en bout de la CI vérifie aussi, avec un paquet de 16 Mo, une ligne volumineuse reconstituée et une valeur trop grande signalée.
+
 ## [1.13.1] - 2026-10-08
 
 ### Corrigé
@@ -165,6 +176,7 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le pr
 - Protection de l'installeur par mot de passe.
 - Compatibilité WordPress 4.9 à 7.1 et PHP 5.6 à 8.4.
 
+[1.14.0]: https://github.com/fred-selest/wp-migration/releases/tag/v1.14.0
 [1.13.1]: https://github.com/fred-selest/wp-migration/releases/tag/v1.13.1
 [1.13.0]: https://github.com/fred-selest/wp-migration/releases/tag/v1.13.0
 [1.12.0]: https://github.com/fred-selest/wp-migration/releases/tag/v1.12.0

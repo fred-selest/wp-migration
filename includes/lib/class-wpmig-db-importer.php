@@ -385,8 +385,10 @@ if ( ! class_exists( 'WPMIG_DB_Importer' ) ) {
 					$done = true;
 					break;
 				}
-				$sql = rtrim( $line, "\r\n" );
-				if ( '' === trim( $sql ) || 0 === strpos( $sql, '--' ) || 0 === strpos( $sql, '/*' ) ) {
+				// One copy of the statement only: a row of several tens of MB must not be held twice.
+				$sql  = rtrim( $line, "\r\n" );
+				$line = null;
+				if ( '' === trim( substr( $sql, 0, 64 ) ) || 0 === strpos( $sql, '--' ) || 0 === strpos( $sql, '/*' ) ) {
 					$offset = ftell( $fh );
 					continue;
 				}
@@ -395,6 +397,7 @@ if ( ! class_exists( 'WPMIG_DB_Importer' ) ) {
 					throw new WPMIG_Exception( 'Fichier SQL incomplet ou corrompu à l\'octet ' . $offset . '.' );
 				}
 				$this->execute_statement( $sql );
+				$sql    = null;
 				$offset = ftell( $fh );
 				$ran    = true;
 			}
@@ -409,10 +412,10 @@ if ( ! class_exists( 'WPMIG_DB_Importer' ) ) {
 		/**
 		 * Execute one statement of the dump.
 		 *
-		 * @param string $sql Statement.
+		 * @param string $sql Statement (by reference: it is released as soon as it is parsed).
 		 * @throws WPMIG_Exception On fatal error.
 		 */
-		public function execute_statement( $sql ) {
+		public function execute_statement( &$sql ) {
 			$upper = strtoupper( substr( $sql, 0, 14 ) );
 			if ( 0 === strpos( $upper, 'INSERT' ) ) {
 				$this->execute_insert( $sql );
@@ -454,11 +457,12 @@ if ( ! class_exists( 'WPMIG_DB_Importer' ) ) {
 		/**
 		 * INSERT with search & replace and splitting (max_allowed_packet).
 		 *
-		 * @param string $sql Statement.
+		 * @param string $sql Statement (by reference, released once parsed).
 		 */
-		private function execute_insert( $sql ) {
+		private function execute_insert( &$sql ) {
+			$limit   = $this->server['max_packet'] - 1024;
 			$replace = $this->replacer && $this->needs_replace( $sql );
-			$too_big = strlen( $sql ) > $this->server['max_packet'] - 1024;
+			$too_big = strlen( $sql ) > $limit;
 			if ( ! $replace && ! $too_big ) {
 				$this->run( $this->rename_insert( $sql ), true );
 				return;
@@ -469,29 +473,39 @@ if ( ! class_exists( 'WPMIG_DB_Importer' ) ) {
 				$this->run( $this->rename_insert( $sql ), true );
 				return;
 			}
+			// The rows now hold the data: the raw statement can go.
+			$sql   = null;
 			$table = $parsed['table'];
-			if ( $replace ) {
-				$skip = array();
-				if ( isset( $this->skip_columns[ $table ] ) && $parsed['columns'] ) {
-					foreach ( $parsed['columns'] as $i => $col ) {
-						if ( in_array( $col, $this->skip_columns[ $table ], true ) ) {
-							$skip[ $i ] = true;
-						}
-					}
-				}
-				foreach ( $parsed['rows'] as $r => $row ) {
-					foreach ( $row as $i => $value ) {
-						if ( 's' === $value[0] && ! isset( $skip[ $i ] ) ) {
-							$parsed['rows'][ $r ][ $i ][1] = $this->replacer->replace( $value[1] );
-						}
+			$skip  = array();
+			if ( $replace && isset( $this->skip_columns[ $table ] ) && $parsed['columns'] ) {
+				foreach ( $parsed['columns'] as $i => $col ) {
+					if ( in_array( $col, $this->skip_columns[ $table ], true ) ) {
+						$skip[ $i ] = true;
 					}
 				}
 			}
 			$head  = $this->rename_insert( $parsed['head'] );
-			$limit = $this->server['max_packet'] - 1024;
 			$batch = '';
-			foreach ( $parsed['rows'] as $row ) {
+			foreach ( $parsed['rows'] as $r => $row ) {
+				$parsed['rows'][ $r ] = null;
+				if ( $replace ) {
+					foreach ( $row as $i => $value ) {
+						if ( 's' === $value[0] && ! isset( $skip[ $i ] ) ) {
+							$row[ $i ][1] = $this->replacer->replace( $value[1] );
+						}
+					}
+				}
 				$tuple = WPMIG_SQL::build_row( $row );
+				if ( strlen( $head ) + strlen( $tuple ) + 2 > $limit ) {
+					// Larger than a packet: flush what is waiting, then insert this row in pieces.
+					if ( '' !== $batch ) {
+						$this->run( $head . $batch . ';', true );
+						$batch = '';
+					}
+					$tuple = null;
+					$this->insert_oversized( $table, $parsed['columns'], $row, $limit );
+					continue;
+				}
 				if ( '' !== $batch && strlen( $head ) + strlen( $batch ) + strlen( $tuple ) + 2 > $limit ) {
 					$this->run( $head . $batch . ';', true );
 					$batch = '';
@@ -500,6 +514,146 @@ if ( ! class_exists( 'WPMIG_DB_Importer' ) ) {
 			}
 			if ( '' !== $batch ) {
 				$this->run( $head . $batch . ';', true );
+			}
+		}
+
+		/**
+		 * Names of the columns of an imported table (in order).
+		 *
+		 * @param string $table Destination table.
+		 * @return array
+		 */
+		private function table_columns( $table ) {
+			$out = array();
+			$res = $this->query( 'SHOW COLUMNS FROM ' . WPMIG_SQL::quote_id( $table ) );
+			if ( $res ) {
+				while ( $row = $res->fetch_assoc() ) {
+					$out[] = $row['Field'];
+				}
+			}
+			return $out;
+		}
+
+		/**
+		 * Primary key columns of an imported table.
+		 *
+		 * @param string $table Destination table.
+		 * @return array
+		 */
+		private function primary_key( $table ) {
+			$out = array();
+			$res = $this->query( 'SHOW KEYS FROM ' . WPMIG_SQL::quote_id( $table ) . " WHERE Key_name = 'PRIMARY'" );
+			if ( $res ) {
+				while ( $row = $res->fetch_assoc() ) {
+					$out[ (int) $row['Seq_in_index'] ] = $row['Column_name'];
+				}
+			}
+			ksort( $out );
+			return array_values( $out );
+		}
+
+		/**
+		 * Size in MB for the messages.
+		 *
+		 * @param int $bytes Bytes.
+		 * @return string
+		 */
+		private static function megabytes( $bytes ) {
+			return number_format( $bytes / 1048576, 1, ',', '' ) . ' Mo';
+		}
+
+		/**
+		 * SQL literal of a parsed value.
+		 *
+		 * @param array $value Value (type, text).
+		 * @return string
+		 */
+		private static function literal( array $value ) {
+			return 's' === $value[0] ? "'" . WPMIG_SQL::escape( $value[1] ) . "'" : $value[1];
+		}
+
+		/**
+		 * Insert a row that does not fit in one packet: the row goes in with its big
+		 * values empty, then every big value is appended in pieces (UPDATE ... CONCAT),
+		 * the row being found again by its primary key.
+		 *
+		 * @param string $source  Table in the dump.
+		 * @param array  $columns Columns of the INSERT (empty when not listed).
+		 * @param array  $row     Values.
+		 * @param int    $limit   Largest query.
+		 */
+		private function insert_oversized( $source, array $columns, array $row, $limit ) {
+			$table   = isset( $this->tables[ $source ] ) ? $this->tables[ $source ] : $source;
+			$columns = $columns ? $columns : $this->table_columns( $table );
+			$keys    = $this->primary_key( $table );
+			$size    = 0;
+			foreach ( $row as $value ) {
+				$size += strlen( $value[1] );
+			}
+			if ( ! $keys || count( $columns ) !== count( $row ) || array_diff( $keys, $columns ) ) {
+				$this->add_error( sprintf( 'Ligne de %s ignorée : plus grande que max_allowed_packet (%s) et la table `%s` n\'a pas de clé primaire qui permettrait de l\'insérer par morceaux.', self::megabytes( $size ), self::megabytes( $this->server['max_packet'] ), $source ), '' );
+				return;
+			}
+			$threshold = (int) ( $limit / 8 );
+			$small     = $row;
+			$big       = array();
+			foreach ( $row as $i => $value ) {
+				if ( strlen( $value[1] ) > $threshold ) {
+					$big[ $i ]   = $value;
+					$small[ $i ] = array( 'r', "''" );
+				}
+			}
+			$where = array();
+			foreach ( $keys as $key ) {
+				$where[] = WPMIG_SQL::quote_id( $key ) . ' = ' . self::literal( $row[ array_search( $key, $columns, true ) ] );
+			}
+			$where = ' WHERE ' . implode( ' AND ', $where );
+			if ( ! $this->run( 'INSERT INTO ' . WPMIG_SQL::quote_id( $table ) . ' VALUES ' . WPMIG_SQL::build_row( $small ) . ';', true ) ) {
+				return;
+			}
+			$row   = null;
+			$small = null;
+			foreach ( $big as $i => $value ) {
+				$col = WPMIG_SQL::quote_id( $columns[ $i ] );
+				$len = strlen( $value[1] );
+				$pos = 0;
+				// MySQL also limits the result of a string function (CONCAT) to max_allowed_packet: a single
+				// value larger than that cannot be rebuilt, and without strict mode it would silently become NULL.
+				$stored = 's' === $value[0] ? $len : (int) ( ( $len - 2 ) / 2 );
+				if ( $stored > $limit ) {
+					$this->add_error( sprintf( 'Valeur de %s (table `%s`, colonne `%s`) plus grande que max_allowed_packet (%s) : elle ne peut pas être importée et a été laissée vide. Faites augmenter max_allowed_packet par l\'hébergeur, puis relancez l\'installation.', self::megabytes( $stored ), $source, $columns[ $i ], self::megabytes( $this->server['max_packet'] ) ), '' );
+					$big[ $i ] = null;
+					continue;
+				}
+				if ( 's' === $value[0] ) {
+					// Escaping can double the size of a piece.
+					$piece = max( 4096, (int) ( ( $limit - 2048 ) / 2.2 ) );
+					while ( $pos < $len ) {
+						$take = min( $piece, $len - $pos );
+						// Never cut a multibyte character.
+						while ( $pos + $take < $len && ( ord( $value[1][ $pos + $take ] ) & 0xC0 ) === 0x80 && $take > 1 ) {
+							$take--;
+						}
+						$chunk = "'" . WPMIG_SQL::escape( substr( $value[1], $pos, $take ) ) . "'";
+						$pos  += $take;
+						if ( ! $this->run( 'UPDATE ' . WPMIG_SQL::quote_id( $table ) . " SET $col = CONCAT($col, $chunk)" . $where . ';', true ) ) {
+							break;
+						}
+					}
+				} elseif ( 0 === strncmp( $value[1], '0x', 2 ) && strlen( $value[1] ) === 2 + strspn( $value[1], '0123456789abcdefABCDEF', 2 ) ) {
+					$piece = max( 4096, (int) ( ( $limit - 2048 ) / 2 ) ) & ~1;
+					$hlen  = $len - 2;
+					while ( $pos < $hlen ) {
+						$chunk = '0x' . substr( $value[1], 2 + $pos, $piece );
+						$pos  += $piece;
+						if ( ! $this->run( 'UPDATE ' . WPMIG_SQL::quote_id( $table ) . " SET $col = CONCAT($col, $chunk)" . $where . ';', true ) ) {
+							break;
+						}
+					}
+				} else {
+					$this->add_error( 'Valeur trop grande d\'un type non pris en charge dans la table `' . $source . '` : laissée vide.', '' );
+				}
+				$big[ $i ] = null;
 			}
 		}
 
