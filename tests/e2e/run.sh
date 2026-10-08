@@ -70,6 +70,10 @@ install_site() { # dossier base port
 	$WP core download --path="$dir" --version="$WP_VERSION" --force >/dev/null
 	mysql_cmd -e "DROP DATABASE IF EXISTS $db; CREATE DATABASE $db CHARACTER SET utf8mb4;"
 	$WP --path="$dir" config create --dbname="$db" --dbuser="$DB_USER" --dbpass="$DB_PASS" --dbhost="$DB_HOST" --skip-check >/dev/null
+	# Pas de mise à jour automatique de WordPress en plein test (elle mélangerait deux versions des fichiers).
+	$WP --path="$dir" config set WP_AUTO_UPDATE_CORE false --raw >/dev/null
+	$WP --path="$dir" config set AUTOMATIC_UPDATER_DISABLED true --raw >/dev/null
+	$WP --path="$dir" config set DISABLE_WP_CRON true --raw >/dev/null
 	$WP --path="$dir" core install --url="http://127.0.0.1:$port" --title="Site de test" --admin_user=admin --admin_password='Adm1n-passw0rd!' --admin_email=admin@example.org --skip-email >/dev/null
 }
 
@@ -177,6 +181,23 @@ contains "réglage protégé signalé" "$LAST" "protected"
 wps eval 'WPMIG_Sync_Source::revoke();' >/dev/null
 OUT=$(wpd migration compare "$LINK" 2>&1 || true)
 contains "lien révoqué refusé" "$OUT" "invalide, expiré ou révoqué"
+
+
+# --------------------------------------------------------------------------
+step "Transfert direct : l'installeur télécharge l'archive (avec et sans cURL)"
+SRC_ID=$(wps migration list | awk 'NR==2 {print $1}')
+TLINK=$(wps migration transfer-link "$SRC_ID" 2>&1 | grep -m1 '^http')
+[ -n "$TLINK" ] && ok "lien de transfert créé" || ko "lien de transfert créé"
+for mode in curl fopen; do
+	TDIR="$WORK/transfer-$mode"
+	mkdir -p "$TDIR"
+	cp "$INSTALLER" "$TDIR/installer.php"
+	PHP_OPTS=""
+	[ "$mode" = "fopen" ] && PHP_OPTS="-d disable_functions=curl_init,curl_exec,curl_setopt,curl_getinfo,curl_error,curl_close,curl_setopt_array"
+	OUT=$(cd "$TDIR" && php $PHP_OPTS -d error_reporting=-1 -d display_errors=1 installer.php --source-url="$TLINK" --check 2>&1)
+	contains "transfert ($mode) : archive téléchargée" "$OUT" "Archive téléchargée et contrôlée"
+	absent "transfert ($mode) : aucun avis de dépréciation" "$OUT" "Deprecated"
+done
 
 # --------------------------------------------------------------------------
 step "Restauration d'une sauvegarde sur le site de destination"
