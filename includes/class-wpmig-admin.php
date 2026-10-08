@@ -30,7 +30,7 @@ class WPMIG_Admin {
 		add_action( 'wp_ajax_wpmig_transfer_link', array( __CLASS__, 'ajax_transfer_link' ) );
 		add_action( 'wp_ajax_wpmig_transfer_revoke', array( __CLASS__, 'ajax_transfer_revoke' ) );
 		add_action( 'wp_ajax_wpmig_import_prepare', array( __CLASS__, 'ajax_import_prepare' ) );
-		foreach ( array( 'sync_probe', 'sync_start', 'sync_step', 'sync_confirm', 'sync_undo', 'sync_dismiss', 'sync_link', 'sync_revoke', 'search_start', 'search_step', 'search_confirm', 'search_undo', 'search_dismiss', 'settings_list', 'settings_preview', 'settings_apply', 'settings_undo', 'compare_run' ) as $action ) {
+		foreach ( array( 'sync_probe', 'sync_start', 'sync_step', 'sync_confirm', 'sync_undo', 'sync_dismiss', 'sync_link', 'sync_revoke', 'search_start', 'search_step', 'search_confirm', 'search_undo', 'search_dismiss', 'settings_list', 'settings_preview', 'settings_apply', 'settings_undo', 'compare_run', 'restore_prepare', 'restore_cancel' ) as $action ) {
 			add_action( 'wp_ajax_wpmig_' . $action, array( __CLASS__, 'ajax_' . $action ) );
 		}
 		add_action( 'admin_post_wpmig_download', array( __CLASS__, 'download' ) );
@@ -444,6 +444,36 @@ class WPMIG_Admin {
 		$link = isset( $_POST['link'] ) ? trim( sanitize_text_field( wp_unslash( $_POST['link'] ) ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification
 		try {
 			wp_send_json_success( WPMIG_Compare::run( $link ) );
+		} catch ( Exception $e ) {
+			wp_send_json_error( array( 'message' => $e->getMessage() ) );
+		}
+	}
+
+	/**
+	 * Prepare the restoration of a backup (installer and archive in the site root).
+	 */
+	public static function ajax_restore_prepare() {
+		self::check_ajax();
+		if ( ! current_user_can( 'install_plugins' ) ) {
+			wp_send_json_error( array( 'message' => 'Droits insuffisants : la restauration nécessite de pouvoir installer des extensions.' ) );
+		}
+		$id = isset( $_POST['id'] ) ? sanitize_text_field( wp_unslash( $_POST['id'] ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification
+		try {
+			wp_send_json_success( WPMIG_Restore::prepare( $id ) );
+		} catch ( Exception $e ) {
+			wp_send_json_error( array( 'message' => $e->getMessage() ) );
+		}
+	}
+
+	/**
+	 * Cancel the preparation of a restoration.
+	 */
+	public static function ajax_restore_cancel() {
+		self::check_ajax();
+		$id = isset( $_POST['id'] ) ? sanitize_text_field( wp_unslash( $_POST['id'] ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification
+		try {
+			WPMIG_Restore::cancel( $id );
+			wp_send_json_success();
 		} catch ( Exception $e ) {
 			wp_send_json_error( array( 'message' => $e->getMessage() ) );
 		}
@@ -1036,6 +1066,10 @@ class WPMIG_Admin {
 			echo '<td>' . esc_html( wpmig_date( $d['created'] ) ) . '</td>';
 			echo '<td>' . ( ! empty( $d['sizes']['archive'] ) ? esc_html( size_format( $d['sizes']['archive'], 1 ) ) : '—' ) . '</td>';
 			echo '<td>' . esc_html( isset( $labels[ $d['status'] ] ) ? $labels[ $d['status'] ] : $d['status'] );
+			$prepared = 'complete' === $d['status'] ? WPMIG_Restore::prepared( $package ) : '';
+			if ( $prepared ) {
+				echo '<br><span class="wpmig-transfer-active">Restauration préparée : <a href="' . esc_url( $prepared ) . '">ouvrir l\'installeur</a> · <button type="button" class="button-link wpmig-danger" data-restore-cancel="1">annuler</button></span>';
+			}
 			$until = 'complete' === $d['status'] ? WPMIG_Transfer::active_until( $package ) : 0;
 			if ( $until ) {
 				echo '<br><span class="wpmig-transfer-active">Lien de transfert actif jusqu\'au ' . esc_html( wpmig_date( $until ) ) . '</span>';
@@ -1049,6 +1083,9 @@ class WPMIG_Admin {
 				echo '<a class="button button-primary" data-download="installer" href="#">Installeur</a> ';
 				echo '<button type="button" class="button" data-download="both">Les deux</button> ';
 				echo '<button type="button" class="button" data-transfer="1">Transfert direct</button> ';
+				if ( WPMIG_Restore::available( $package ) && current_user_can( 'install_plugins' ) && ! ( defined( 'DISALLOW_FILE_MODS' ) && DISALLOW_FILE_MODS ) ) {
+					echo '<button type="button" class="button" data-restore="1">Restaurer</button> ';
+				}
 			} elseif ( in_array( $d['status'], array( 'scanning', 'scanned', 'building' ), true ) ) {
 				echo '<button type="button" class="button" data-resume="1">Reprendre</button> ';
 			}
