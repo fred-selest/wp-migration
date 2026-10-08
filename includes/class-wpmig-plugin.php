@@ -266,6 +266,10 @@ class WPMIG_Plugin {
 				|| preg_match( '/_installer\.php$/', $item )
 				|| preg_match( '/\.wpmig$/', $item )
 				|| 0 === strpos( $item, 'wpmig-installer-data' )
+				// Copies kept aside by the installer: replaced wp-config.php, files of the old host.
+				|| preg_match( '/^wp-config-(?:sauvegarde|origine)-[0-9-]+\.php$/', $item )
+				|| preg_match( '/^(?:\.htaccess|\.user\.ini|php\.ini)\.wpmig-source$/', $item )
+				|| preg_match( '/^\.htaccess\.wpmig-backup-[0-9-]+$/', $item )
 				// wp-config backups of versions 1.0 / 1.1, readable over HTTP.
 				|| 0 === strpos( $item, 'wp-config.php.wpmig-backup-' ) ) {
 				$found[] = $root . '/' . $item;
