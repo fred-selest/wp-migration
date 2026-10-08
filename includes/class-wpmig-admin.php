@@ -30,7 +30,7 @@ class WPMIG_Admin {
 		add_action( 'wp_ajax_wpmig_transfer_link', array( __CLASS__, 'ajax_transfer_link' ) );
 		add_action( 'wp_ajax_wpmig_transfer_revoke', array( __CLASS__, 'ajax_transfer_revoke' ) );
 		add_action( 'wp_ajax_wpmig_import_prepare', array( __CLASS__, 'ajax_import_prepare' ) );
-		foreach ( array( 'sync_probe', 'sync_start', 'sync_step', 'sync_confirm', 'sync_undo', 'sync_dismiss', 'sync_link', 'sync_revoke', 'search_start', 'search_step', 'search_confirm', 'search_undo', 'search_dismiss' ) as $action ) {
+		foreach ( array( 'sync_probe', 'sync_start', 'sync_step', 'sync_confirm', 'sync_undo', 'sync_dismiss', 'sync_link', 'sync_revoke', 'search_start', 'search_step', 'search_confirm', 'search_undo', 'search_dismiss', 'settings_list', 'settings_preview', 'settings_apply', 'settings_undo' ) as $action ) {
 			add_action( 'wp_ajax_wpmig_' . $action, array( __CLASS__, 'ajax_' . $action ) );
 		}
 		add_action( 'admin_post_wpmig_download', array( __CLASS__, 'download' ) );
@@ -368,6 +368,75 @@ class WPMIG_Admin {
 	}
 
 	/**
+	 * Settings of the source site: list.
+	 */
+	public static function ajax_settings_list() {
+		self::check_ajax();
+		// phpcs:disable WordPress.Security.NonceVerification -- checked in check_ajax().
+		$link = isset( $_POST['link'] ) ? trim( sanitize_text_field( wp_unslash( $_POST['link'] ) ) ) : '';
+		$q    = isset( $_POST['q'] ) ? sanitize_text_field( wp_unslash( $_POST['q'] ) ) : '';
+		// phpcs:enable
+		try {
+			wp_send_json_success( WPMIG_Settings::remote_list( $link, $q ) );
+		} catch ( Exception $e ) {
+			wp_send_json_error( array( 'message' => $e->getMessage() ) );
+		}
+	}
+
+	/**
+	 * Names, link and options of a settings request.
+	 *
+	 * @return array link, names, adapt.
+	 */
+	private static function request_settings() {
+		// phpcs:disable WordPress.Security.NonceVerification -- checked in check_ajax().
+		$link  = isset( $_POST['link'] ) ? trim( sanitize_text_field( wp_unslash( $_POST['link'] ) ) ) : '';
+		$names = isset( $_POST['names'] ) ? array_filter( array_map( 'trim', explode( "\n", sanitize_textarea_field( wp_unslash( $_POST['names'] ) ) ) ), 'strlen' ) : array();
+		$adapt = ! empty( $_POST['adapt'] );
+		// phpcs:enable
+		return array( $link, $names, $adapt );
+	}
+
+	/**
+	 * Settings of the source site: comparison with this site.
+	 */
+	public static function ajax_settings_preview() {
+		self::check_ajax();
+		list( $link, $names, $adapt ) = self::request_settings();
+		try {
+			wp_send_json_success( WPMIG_Settings::public_plan( WPMIG_Settings::plan( $link, $names, $adapt ) ) );
+		} catch ( Exception $e ) {
+			wp_send_json_error( array( 'message' => $e->getMessage() ) );
+		}
+	}
+
+	/**
+	 * Settings of the source site: copy.
+	 */
+	public static function ajax_settings_apply() {
+		self::check_ajax();
+		list( $link, $names, $adapt ) = self::request_settings();
+		try {
+			wp_send_json_success( WPMIG_Settings::apply( $link, $names, $adapt ) );
+		} catch ( Exception $e ) {
+			wp_send_json_error( array( 'message' => $e->getMessage() ) );
+		}
+	}
+
+	/**
+	 * Undo a copy of settings.
+	 */
+	public static function ajax_settings_undo() {
+		self::check_ajax();
+		$id = isset( $_POST['id'] ) ? preg_replace( '/[^a-f0-9_]/', '', sanitize_text_field( wp_unslash( $_POST['id'] ) ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification
+		try {
+			wp_send_json_success( WPMIG_Settings::undo( $id ) );
+		} catch ( Exception $e ) {
+			wp_send_json_error( array( 'message' => $e->getMessage() ) );
+		}
+	}
+
+	/**
 	 * Close the search & replace panel.
 	 */
 	public static function ajax_search_dismiss() {
@@ -678,6 +747,7 @@ class WPMIG_Admin {
 			case 'sync':
 				self::render_sync_source();
 				self::render_sync();
+				self::render_settings_pull();
 				break;
 			case 'search':
 				self::render_search();
@@ -1303,7 +1373,7 @@ class WPMIG_Admin {
 		?>
 		<div class="wpmig-card wpmig-sync-source" id="wpmig-sync-source">
 			<h2>1. Sur le site en ligne : autoriser la synchronisation</h2>
-			<p>Pour récupérer sur une copie de travail de ce site (préproduction, développement) les commandes, clients, produits, articles et pages créés ou modifiés ici depuis la copie : créez un lien et collez-le dans <strong>WP Migration → Synchronisation</strong> sur la copie. Ce site est seulement lu, jamais modifié.</p>
+			<p>Pour récupérer sur une copie de travail de ce site (préproduction, développement) les commandes, clients, produits, articles et pages créés ou modifiés ici depuis la copie, ou pour y reprendre des réglages précis (moyen de paiement, langues…) : créez un lien et collez-le dans <strong>WP Migration → Synchronisation</strong> sur la copie. Ce site est seulement lu, jamais modifié.</p>
 			<div class="wpmig-sync-link-status">
 				<?php if ( $link ) : ?>
 					<p><span class="wpmig-transfer-active">● Lien actif jusqu'au <?php echo esc_html( wpmig_date( $link['expires'] ) ); ?></span>
@@ -1389,6 +1459,48 @@ class WPMIG_Admin {
 								echo esc_html( ( 'undone' === $h['status'] ? 'Annulée. ' : '' ) . ( $parts ? implode( ', ', $parts ) : 'rien à importer' ) );
 								?>
 							</td>
+						</tr>
+					<?php endforeach; ?>
+					</tbody></table>
+				</details>
+			<?php endif; ?>
+		</div>
+		<?php
+	}
+
+	/**
+	 * Settings taken from another site.
+	 */
+	private static function render_settings_pull() {
+		$history = WPMIG_Settings::history();
+		?>
+		<div class="wpmig-card wpmig-settings" id="wpmig-settings">
+			<h2>Reprendre des réglages d'un autre site</h2>
+			<p>Un réglage a disparu ou diffère de celui du site d'origine (moyen de paiement, TVA, langues, widgets…) ? Choisissez-le ici : il est lu sur le site d'origine avec le même lien de synchronisation, <strong>comparé au vôtre avant toute écriture</strong>, puis copié. Les adresses du site d'origine sont remplacées par celles de ce site, les copies peuvent être annulées, et les réglages propres à chaque site (adresse, thème, extensions, versions) ne sont jamais touchés.</p>
+			<form id="wpmig-settings-form">
+				<p><label for="wpmig-settings-link"><strong>Lien de synchronisation</strong> du site d'origine (WP Migration 1.9.0 ou plus récent)</label><br>
+				<input type="url" id="wpmig-settings-link" class="large-text code" required placeholder="https://site-origine.fr/wp-admin/admin-ajax.php?action=wpmig_sync&amp;key=…"></p>
+				<p><label for="wpmig-settings-q"><strong>Nom du réglage</strong></label><br>
+				<input type="text" id="wpmig-settings-q" class="regular-text code" autocomplete="off" spellcheck="false" placeholder="monetico, woocommerce_, polylang…">
+				<button type="submit" class="button button-primary">Chercher</button></p>
+				<p class="description">Filtres rapides :
+					<?php foreach ( array( 'woocommerce_' => 'WooCommerce', '_settings' => 'Réglages d\'extensions', 'polylang' => 'Polylang', 'icl_' => 'WPML', 'widget' => 'Widgets', 'theme_mods_' => 'Thème' ) as $q => $label ) : ?>
+						<button type="button" class="button-link" data-settings-q="<?php echo esc_attr( $q ); ?>"><?php echo esc_html( $label ); ?></button> ·
+					<?php endforeach; ?>
+					<button type="button" class="button-link" data-settings-q="*">Tout lister</button>
+				</p>
+			</form>
+			<div id="wpmig-settings-panel"></div>
+			<?php if ( $history ) : ?>
+				<details class="wpmig-sync-history"><summary>Copies précédentes (<?php echo esc_html( count( $history ) ); ?>)</summary>
+					<table class="widefat striped"><thead><tr><th>Date</th><th>Site d'origine</th><th>Réglages</th><th>Résultat</th><th></th></tr></thead><tbody>
+					<?php foreach ( $history as $h ) : ?>
+						<tr>
+							<td><?php echo esc_html( wpmig_date( $h['finished'] ) ); ?></td>
+							<td><code><?php echo esc_html( $h['source'] ); ?></code></td>
+							<td><?php echo esc_html( implode( ', ', array_slice( $h['names'], 0, 4 ) ) . ( $h['count'] > 4 ? '…' : '' ) ); ?></td>
+							<td><?php echo esc_html( 'undone' === $h['status'] ? 'Annulée' : sprintf( '%d réglage(s) copié(s)', $h['count'] ) ); ?></td>
+							<td><?php if ( 'done' === $h['status'] && is_file( WPMIG_Plugin::storage_dir() . 'settings-' . $h['id'] . '.php' ) ) : ?><button type="button" class="button-link wpmig-danger" data-settings-undo="<?php echo esc_attr( $h['id'] ); ?>">Annuler</button><?php endif; ?></td>
 						</tr>
 					<?php endforeach; ?>
 					</tbody></table>

@@ -609,6 +609,110 @@ class WPMIG_CLI {
 	}
 
 	/**
+	 * Take settings (options) from another site through its synchronization link.
+	 *
+	 * Without --names or --filter, lists the options available on the source.
+	 * The copy is compared with the local values first; nothing is written with
+	 * --dry-run.
+	 *
+	 * ## OPTIONS
+	 *
+	 * <link>
+	 * : Synchronization link created on the source site.
+	 *
+	 * [--filter=<text>]
+	 * : Part of the option name (listing, or selection with --all).
+	 *
+	 * [--names=<names>]
+	 * : Comma separated option names to copy.
+	 *
+	 * [--all]
+	 * : Copy every option matching --filter.
+	 *
+	 * [--no-adapt]
+	 * : Do not replace the addresses of the source with the ones of this site.
+	 *
+	 * [--dry-run]
+	 * : Only compare.
+	 *
+	 * [--yes]
+	 * : Do not ask for confirmation.
+	 *
+	 * ## EXAMPLES
+	 *
+	 *     wp migration settings 'https://www.old.fr/wp-admin/admin-ajax.php?action=wpmig_sync&key=…' --filter=monetico
+	 *     wp migration settings '<link>' --names=woocommerce_monetico_settings --dry-run
+	 *     wp migration settings '<link>' --filter=monetico --all --yes
+	 *
+	 * @param array $args       Arguments.
+	 * @param array $assoc_args Options.
+	 */
+	public function settings( $args, $assoc_args ) {
+		try {
+			$names = isset( $assoc_args['names'] ) ? array_filter( array_map( 'trim', explode( ',', $assoc_args['names'] ) ), 'strlen' ) : array();
+			if ( ! $names ) {
+				$list = WPMIG_Settings::remote_list( $args[0], isset( $assoc_args['filter'] ) ? $assoc_args['filter'] : '' );
+				if ( empty( $assoc_args['all'] ) ) {
+					WP_CLI::log( sprintf( '%d réglage(s) sur le site d\'origine :', $list['total'] ) );
+					foreach ( $list['options'] as $o ) {
+						WP_CLI::log( sprintf( '  %-60s %8d o  %s', $o['name'], $o['size'], $o['local'] ? 'existe ici' : 'absent ici' ) );
+					}
+					WP_CLI::success( 'Choisissez avec --names=… ou --filter=… --all.' );
+					return;
+				}
+				$names = wp_list_pluck( $list['options'], 'name' );
+			}
+			$plan = WPMIG_Settings::plan( $args[0], $names, ! isset( $assoc_args['no-adapt'] ) );
+			$todo = 0;
+			WP_CLI::log( 'Origine : ' . $plan['source'] );
+			foreach ( $plan['items'] as $item ) {
+				WP_CLI::log( sprintf( '  %-60s %s%s', $item['name'], $item['status'], $item['note'] ? ' — ' . $item['note'] : '' ) );
+				foreach ( $item['changes'] as $line ) {
+					WP_CLI::log( '      ' . $line );
+				}
+				if ( in_array( $item['status'], array( 'new', 'different' ), true ) ) {
+					$todo++;
+				}
+			}
+			if ( isset( $assoc_args['dry-run'] ) || ! $todo ) {
+				WP_CLI::success( $todo ? sprintf( '%d réglage(s) seraient copié(s), rien n\'a été modifié.', $todo ) : 'Rien à copier.' );
+				return;
+			}
+			WP_CLI::confirm( sprintf( 'Copier %d réglage(s) sur ce site ?', $todo ), $assoc_args );
+			$res = WPMIG_Settings::apply( $args[0], $names, ! isset( $assoc_args['no-adapt'] ) );
+			WP_CLI::success( sprintf( '%d réglage(s) copié(s) (annulation possible : wp migration settings-undo %s). Videz les caches du site.', $res['changed'], $res['id'] ) );
+		} catch ( WPMIG_Exception $e ) {
+			WP_CLI::error( $e->getMessage() );
+		}
+	}
+
+	/**
+	 * Undo a copy of settings (the last one by default).
+	 *
+	 * ## OPTIONS
+	 *
+	 * [<id>]
+	 * : Identifier printed by wp migration settings.
+	 *
+	 * [--yes]
+	 * : Do not ask for confirmation.
+	 *
+	 * @subcommand settings-undo
+	 * @param array $args       Arguments.
+	 * @param array $assoc_args Options.
+	 */
+	public function settings_undo( $args, $assoc_args ) {
+		$id = isset( $args[0] ) ? $args[0] : '';
+		WP_CLI::confirm( 'Annuler la copie de réglages ' . ( $id ? $id : 'la plus récente' ) . ' ?', $assoc_args );
+		try {
+			$res = WPMIG_Settings::undo( $id );
+		} catch ( WPMIG_Exception $e ) {
+			WP_CLI::error( $e->getMessage() );
+		}
+		WP_CLI::success( sprintf( '%d réglage(s) remis en état, %d laissé(s) tel(s) quel(s) (modifiés depuis).', $res['restored'], count( $res['kept'] ) ) );
+	}
+
+	/**
 	 * Print the result of a search and replace.
 	 *
 	 * @param array $state Public state.

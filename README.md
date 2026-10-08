@@ -54,6 +54,12 @@ En un clic (sauvegarde complète ou base de données seule), ou avec l'assistant
 
 ![Synchronisation terminée](docs/screenshots/19-synchronisation-terminee.png)
 
+### Reprendre des réglages d'un autre site (onglet Synchronisation)
+
+| Choisir les réglages | Comparaison avant la copie |
+|---|---|
+| ![Choisir les réglages](docs/screenshots/27-reglages-selection.png) | ![Comparaison des réglages](docs/screenshots/28-reglages-comparaison.png) |
+
 ### Rechercher et remplacer dans la base de données
 
 | Formulaire (deux champs, options avancées repliées) | Analyse avant remplacement |
@@ -120,7 +126,7 @@ Le menu **WP Migration** s'ouvre sur une **page d'accueil** qui pose la question
 | **Accueil** | choisir ce que l'on veut faire, voir l'état et le rapport de la dernière migration |
 | **Sauvegardes** | créer une sauvegarde en un clic, la personnaliser, télécharger, lancer un transfert direct, supprimer |
 | **Recevoir un site** | remplacer ce site par une sauvegarde (FTP ou installeur) ou par un autre site, sans FTP, avec un lien de transfert |
-| **Synchronisation** | 1. autoriser la synchronisation (site en ligne), 2. récupérer les commandes et contenus (copie de travail) |
+| **Synchronisation** | 1. autoriser la synchronisation (site en ligne), 2. récupérer les commandes et contenus (copie de travail), 3. reprendre des réglages précis (moyen de paiement, langues, widgets…) |
 | **Rechercher / Remplacer** | changer une adresse ou un texte dans toute la base de données |
 | **Réglages** | nettoyage automatique des anciennes sauvegardes, version installée |
 | **Aide** | les trois scénarios pas à pas |
@@ -218,7 +224,20 @@ L'option « Remplacer aussi les produits, pages et médias modifiés sur ce site
 
 **Identifiants** : chaque contenu garde son identifiant chaque fois que possible — en particulier **les numéros de commande**, connus des clients et des services de paiement. Si la copie utilise déjà le numéro pour une révision, un brouillon automatique ou une commande de test, celle-ci est déplacée ; si c'est un contenu créé sur la copie (une page, un menu…) qui gêne une commande, il est déplacé et ses références connues sont mises à jour (menus, page d'accueil, pages WooCommerce, blocs, images à la une) ; pour les autres contenus, c'est le contenu entrant qui reçoit un nouvel identifiant, et ses liens (image à la une, galerie, variations, client d'une commande…) suivent. Les correspondances sont conservées pour les synchronisations suivantes, et une réserve de 1 000 identifiants au-dessus de ceux du site d'origine éloigne le contenu créé ensuite sur la copie (les numéros de commande peuvent donc sauter d'environ 1 000 après la mise en ligne de la copie).
 
-**Limites** : une suppression définitive sur le site d'origine n'est pas reprise (une mise à la corbeille l'est) ; les réglages, extensions, thèmes, menus et widgets ne sont pas synchronisés (la copie fait référence) ; les données propres à d'autres extensions dans leurs propres tables (abonnements, réservations, fidélité, formulaires…) et les types de contenus personnalisés ne sont pas repris ; avec WPML, les liens entre traductions des contenus sont repris, pas les traductions de catégories créées entre-temps. Après une synchronisation, les statistiques WooCommerce des commandes concernées sont recalculées et les tables de recherche des produits régénérées.
+**Limites** : une suppression définitive sur le site d'origine n'est pas reprise (une mise à la corbeille l'est) ; les réglages, extensions, thèmes, menus et widgets ne sont pas synchronisés (la copie fait référence ; des réglages précis se reprennent à part, voir ci-dessous) ; les données propres à d'autres extensions dans leurs propres tables (abonnements, réservations, fidélité, formulaires…) et les types de contenus personnalisés ne sont pas repris ; avec WPML, les liens entre traductions des contenus sont repris, pas les traductions de catégories créées entre-temps. Après une synchronisation, les statistiques WooCommerce des commandes concernées sont recalculées et les tables de recherche des produits régénérées.
+
+### Reprendre des réglages d'un autre site
+
+Un réglage a disparu après une migration, ou diffère de celui du site d'origine (un moyen de paiement, la TVA, les langues, des widgets…) ? Plutôt que de tout refaire à la main :
+
+1. **Sur le site d'origine** (WP Migration 1.9.0 ou plus récent) : **Synchronisation → 1.** créer le lien de synchronisation (le même que pour le contenu).
+2. **Sur le site à corriger** : **Synchronisation → Reprendre des réglages d'un autre site**, coller le lien et chercher un nom de réglage (`monetico`, `woocommerce_`, `polylang`…) ; des filtres rapides proposent WooCommerce, Polylang, WPML, les widgets et le thème.
+3. Cocher les réglages à reprendre puis **Comparer avec ce site** : chaque réglage est marqué *Nouveau ici*, *Différent* ou *Identique*, avec la liste des différences (les valeurs qui ressemblent à des identifiants, clés ou mots de passe sont masquées). Rien n'est écrit à ce stade.
+4. Éventuellement **Sauvegarder la base de données**, puis **Copier**. La copie peut être **annulée** : les réglages d'origine sont remis, sauf ceux modifiés depuis.
+
+Les valeurs sont copiées telles qu'elles sont stockées (jamais désérialisées), et **les adresses du site d'origine sont remplacées par celles de ce site** (variantes encodées et formes sérialisées comprises ; option décochable). Ne sont jamais copiés : l'adresse du site (`siteurl`, `home`), le thème, les extensions actives, les numéros de version, les tâches planifiées, les données de session et les réglages de WP Migration. Les réglages qui désignent des pages, menus ou termes par leur numéro sont signalés : vérifiez qu'ils existent sur le site à corriger. Un réglage de plus de 1 Mo n'est pas repris.
+
+En SSH : `wp migration settings '<lien>' --filter=monetico` liste, `--names=…` ou `--filter=… --all` choisit, `--dry-run` compare seulement, `wp migration settings-undo` annule.
 
 ### Rechercher et remplacer dans la base de données
 

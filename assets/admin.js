@@ -941,4 +941,167 @@
 			searchLoop( JSON.parse( searchInitial ) );
 		}
 	}
+
+	/* Settings taken from another site. */
+	var settings = document.getElementById( 'wpmig-settings' );
+	if ( settings ) {
+		var settingsForm = $( '#wpmig-settings-form' );
+		var settingsPanel = $( '#wpmig-settings-panel' );
+		var settingsStatus = { 'new': 'Nouveau ici', different: 'Différent', same: 'Identique', missing: 'Absent de l\'origine', protected: 'Jamais copié', too_big: 'Trop volumineux' };
+		var settingsError = function ( err ) {
+			settingsPanel.innerHTML = '<div class="notice notice-error inline"><p>' + esc( err.message ) + '</p></div>';
+		};
+		var settingsChosen = { names: [], adapt: 1 };
+		var settingsPicked = function () {
+			var names = [];
+			settingsPanel.querySelectorAll( 'input[name="wpmig-settings-name"]:checked' ).forEach( function ( c ) {
+				names.push( c.value );
+			} );
+			return names;
+		};
+		var settingsRequest = function () {
+			return {
+				link: $( '#wpmig-settings-link' ).value,
+				names: settingsChosen.names.join( '\n' ),
+				adapt: settingsChosen.adapt
+			};
+		};
+		var settingsSearch = function () {
+			var q = $( '#wpmig-settings-q' ).value.replace( /^\*$/, '' );
+			var button = $( 'button[type="submit"]', settingsForm );
+			button.disabled = true;
+			settingsPanel.innerHTML = '<p class="wpmig-msg">Lecture des réglages du site d\'origine…</p>';
+			post( 'wpmig_settings_list', { link: $( '#wpmig-settings-link' ).value, q: q } ).then( function ( data ) {
+				button.disabled = false;
+				var html = '';
+				if ( ! data.options.length ) {
+					settingsPanel.innerHTML = '<p>Aucun réglage trouvé' + ( q ? ' pour « ' + esc( q ) + ' »' : '' ) + '.</p>';
+					return;
+				}
+				html += '<p>' + esc( data.total ) + ' réglage(s) trouvé(s)' + ( data.total > data.options.length ? ' (les ' + esc( data.options.length ) + ' premiers sont affichés : affinez la recherche)' : '' ) + '. Cochez ceux à reprendre.</p>';
+				html += '<table class="widefat striped wpmig-settings-list"><thead><tr><th></th><th>Réglage</th><th class="num">Taille</th><th>Sur ce site</th></tr></thead><tbody>';
+				data.options.forEach( function ( o ) {
+					html += '<tr><td><input type="checkbox" name="wpmig-settings-name" value="' + esc( o.name ) + '"></td><td><code>' + esc( o.name ) + '</code></td><td class="num">' + esc( o.size ) + ' o</td><td>' + ( o.local ? 'Existe' : '<em>Absent</em>' ) + '</td></tr>';
+				} );
+				html += '</tbody></table>';
+				html += '<p><label><input type="checkbox" id="wpmig-settings-adapt" checked> Remplacer les adresses du site d\'origine par celles de ce site</label></p>';
+				html += '<p><button type="button" class="button button-primary" data-settings="preview">Comparer avec ce site</button></p>';
+				settingsPanel.innerHTML = html;
+			} ).catch( function ( err ) {
+				button.disabled = false;
+				settingsError( err );
+			} );
+		};
+		var settingsPreview = function ( plan ) {
+			var html = '<h3>Comparaison avec ce site</h3><p>Origine : <code>' + esc( plan.source ) + '</code>. Rien n\'est encore modifié.</p>';
+			var copy = 0;
+			html += '<table class="widefat striped wpmig-settings-plan"><thead><tr><th>Réglage</th><th>État</th><th>Détail</th></tr></thead><tbody>';
+			plan.items.forEach( function ( item ) {
+				var detail = '';
+				if ( item.status === 'new' || item.status === 'different' ) {
+					copy++;
+				}
+				if ( item.changes && item.changes.length ) {
+					detail += '<details><summary>' + esc( item.changes.length ) + ' différence(s)</summary><ul class="wpmig-changes">';
+					item.changes.forEach( function ( line ) {
+						detail += '<li><code>' + esc( line ) + '</code></li>';
+					} );
+					detail += '</ul></details>';
+				} else if ( item.status === 'new' ) {
+					detail += esc( item.new_size ) + ' o seront créés' + ( item.secret ? ' (contient probablement des identifiants)' : '' ) + '.';
+				}
+				if ( item.rewritten ) {
+					detail += ' <em>Adresses adaptées à ce site.</em>';
+				}
+				if ( item.note ) {
+					detail += ( detail ? '<br>' : '' ) + '<span class="description">' + esc( item.note ) + '</span>';
+				}
+				html += '<tr><td><code>' + esc( item.name ) + '</code></td><td><span class="wpmig-badge wpmig-badge-' + esc( item.status ) + '">' + esc( settingsStatus[ item.status ] || item.status ) + '</span></td><td>' + detail + '</td></tr>';
+			} );
+			html += '</tbody></table>';
+			if ( copy ) {
+				html += '<p><button type="button" class="button button-primary" data-settings="apply">Copier ' + esc( copy ) + ' réglage(s)</button> <button type="button" class="button" data-settings="backup">Sauvegarder la base de données</button> <button type="button" class="button" data-settings="cancel">Annuler</button></p><div id="wpmig-settings-backup"></div><p class="description">Conseil : sauvegardez d\'abord la base de données. La copie peut aussi être annulée juste après.</p>';
+			} else {
+				html += '<p>Rien à copier. <button type="button" class="button" data-settings="cancel">Fermer</button></p>';
+			}
+			settingsPanel.innerHTML = html;
+		};
+
+		settingsForm.addEventListener( 'submit', function ( e ) {
+			e.preventDefault();
+			settingsSearch();
+		} );
+
+		settings.addEventListener( 'click', function ( e ) {
+			var target = e.target;
+			var q = target.getAttribute( 'data-settings-q' );
+			if ( q ) {
+				$( '#wpmig-settings-q' ).value = q === '*' ? '' : q;
+				if ( $( '#wpmig-settings-link' ).value ) {
+					settingsSearch();
+				} else {
+					$( '#wpmig-settings-link' ).focus();
+				}
+				return;
+			}
+			var undoId = target.getAttribute( 'data-settings-undo' );
+			var action = undoId ? 'undo' : target.getAttribute( 'data-settings' );
+			if ( ! action ) {
+				return;
+			}
+			if ( action === 'cancel' ) {
+				settingsPanel.innerHTML = '';
+				return;
+			}
+			if ( action === 'backup' ) {
+				target.disabled = true;
+				backupDb( $( '#wpmig-settings-backup', settings ), 'avant-reglages' ).catch( function () {} ).then( function () {
+					target.disabled = false;
+				} );
+				return;
+			}
+			if ( action === 'preview' ) {
+				settingsChosen = { names: settingsPicked(), adapt: $( '#wpmig-settings-adapt' ).checked ? 1 : '' };
+				if ( ! settingsChosen.names.length ) {
+					window.alert( 'Cochez au moins un réglage.' );
+					return;
+				}
+				target.disabled = true;
+				post( 'wpmig_settings_preview', settingsRequest() ).then( settingsPreview ).catch( function ( err ) {
+					target.disabled = false;
+					window.alert( err.message );
+				} );
+				return;
+			}
+			if ( action === 'undo' && ! window.confirm( 'Annuler cette copie ? Les réglages d\'origine sont remis, sauf ceux modifiés depuis.' ) ) {
+				return;
+			}
+			if ( action === 'apply' && ! window.confirm( 'Copier ces réglages sur ce site ?' ) ) {
+				return;
+			}
+			target.disabled = true;
+			if ( action === 'apply' ) {
+				post( 'wpmig_settings_apply', settingsRequest() ).then( function ( res ) {
+					var html = '<div class="notice notice-success inline"><p><strong>Copie terminée.</strong> ' + esc( res.changed ) + ' réglage(s) copié(s) dont ' + esc( res.new ) + ' nouveau(x).</p></div>';
+					html += '<p><button type="button" class="button" data-settings="reload">Terminer</button> ' + ( res.id ? '<button type="button" class="button-link wpmig-danger" data-settings-undo="' + esc( res.id ) + '">Annuler cette copie</button>' : '' ) + '</p>';
+					settingsPanel.innerHTML = html;
+				} ).catch( function ( err ) {
+					target.disabled = false;
+					window.alert( err.message );
+				} );
+				return;
+			}
+			if ( action === 'reload' ) {
+				window.location.reload();
+				return;
+			}
+			post( 'wpmig_settings_undo', { id: undoId } ).then( function ( res ) {
+				var html = '<div class="notice notice-success inline"><p><strong>Copie annulée.</strong> ' + esc( res.restored ) + ' réglage(s) remis en état' + ( res.kept.length ? ' ; ' + esc( res.kept.length ) + ' conservé(s) car modifié(s) depuis (' + esc( res.kept.join( ', ' ) ) + ')' : '' ) + '.</p></div><p><button type="button" class="button" data-settings="reload">Terminer</button></p>';
+				settingsPanel.innerHTML = html;
+			} ).catch( function ( err ) {
+				target.disabled = false;
+				window.alert( err.message );
+			} );
+		} );
+	}
 }() );
