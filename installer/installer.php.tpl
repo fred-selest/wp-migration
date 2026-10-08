@@ -2351,8 +2351,17 @@ class WPMIG_Installer {
 					),
 				)
 			);
-			$body     = @file_get_contents( $url, false, $context );
-			$response = function_exists( 'http_get_last_response_headers' ) ? http_get_last_response_headers() : ( isset( $http_response_header ) ? $http_response_header : array() );
+			// The headers come from the stream itself: the $http_response_header variable is deprecated
+			// by PHP 8.5 as soon as its name appears in the code.
+			$body     = false;
+			$response = array();
+			$stream   = @fopen( $url, 'rb', false, $context );
+			if ( $stream ) {
+				$body = stream_get_contents( $stream );
+				$meta = stream_get_meta_data( $stream );
+				fclose( $stream );
+				$response = isset( $meta['wrapper_data'] ) && is_array( $meta['wrapper_data'] ) ? $meta['wrapper_data'] : array();
+			}
 			if ( false === $body || empty( $response ) ) {
 				throw new WPMIG_Exception( 'Téléchargement impossible (vérifiez l\'adresse et que ce serveur peut accéder à Internet).' );
 			}

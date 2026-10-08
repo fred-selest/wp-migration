@@ -583,5 +583,18 @@ check( 'mensuelle : le 1er avant l\'heure', '2026-10-01 04:00', $show( WPMIG_Sch
 check( 'mensuelle : changement d\'année', '2027-01-01 04:00', $show( WPMIG_Schedule::next_run( $monthly, $at( '2026-12-15 10:00', $utc ), $utc ), $utc ) );
 check( 'types de sauvegarde', array( 'full', 'nouploads', 'db' ), array_keys( WPMIG_Schedule::types() ) );
 
+echo "\nCompatibilité PHP 8.5\n";
+$deprecated = array();
+$files      = array_merge( glob( dirname( __DIR__ ) . '/*.php' ), glob( dirname( __DIR__ ) . '/includes/*.php' ), glob( dirname( __DIR__ ) . '/includes/lib/*.php' ), array( dirname( __DIR__ ) . '/installer/installer.php.tpl' ) );
+foreach ( $files as $file ) {
+	foreach ( token_get_all( file_get_contents( $file ) ) as $token ) {
+		// PHP 8.5 emits a deprecation as soon as the name appears in the code, even in a branch never run.
+		if ( is_array( $token ) && T_VARIABLE === $token[0] && '$http_response_header' === $token[1] ) {
+			$deprecated[] = basename( $file ) . ':' . $token[2];
+		}
+	}
+}
+check( 'aucune variable $http_response_header dans le code', array(), $deprecated );
+
 echo "\n" . ( $count - $failures ) . '/' . $count . " tests réussis\n";
 exit( $failures ? 1 : 0 );

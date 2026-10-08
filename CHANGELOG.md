@@ -3,6 +3,11 @@
 Toutes les évolutions notables de WP Migration sont consignées ici.
 Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le projet respecte le [versionnage sémantique](https://semver.org/lang/fr/).
 
+## [1.13.1] - 2026-10-08
+
+### Corrigé
+- **Installeur sur PHP 8.5** : l'avis « The predefined locally scoped $http_response_header variable is deprecated » s'affichait en tête de la page de l'installeur (constaté chez un hébergeur mutualisé en transfert direct). PHP 8.5 le déclenche dès que le nom de la variable figure dans le code, même dans une branche jamais exécutée ; les en-têtes de la réponse sont désormais lus sur le flux lui-même (`stream_get_meta_data`), ce qui fonctionne sur toutes les versions de PHP. Un test unitaire interdit la variable dans le code. Les sauvegardes déjà créées avec une version antérieure gardent l'ancien installeur : recréez-les, ou supprimez l'avis en ajoutant `error_reporting(E_ALL & ~E_DEPRECATED);` en tête de l'installeur.
+
 ## [1.13.0] - 2026-10-08
 
 ### Ajouté
@@ -160,6 +165,7 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le pr
 - Protection de l'installeur par mot de passe.
 - Compatibilité WordPress 4.9 à 7.1 et PHP 5.6 à 8.4.
 
+[1.13.1]: https://github.com/fred-selest/wp-migration/releases/tag/v1.13.1
 [1.13.0]: https://github.com/fred-selest/wp-migration/releases/tag/v1.13.0
 [1.12.0]: https://github.com/fred-selest/wp-migration/releases/tag/v1.12.0
 [1.11.0]: https://github.com/fred-selest/wp-migration/releases/tag/v1.11.0
