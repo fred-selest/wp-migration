@@ -58,6 +58,8 @@ En un clic (sauvegarde complète ou base de données seule), ou avec l'assistant
 
 ![Synchronisation terminée](docs/screenshots/19-synchronisation-terminee.png)
 
+![Types personnalisés et contenus disparus de l'origine](docs/screenshots/32-synchronisation-etendue.png)
+
 ### Reprendre des réglages d'un autre site (onglet Synchronisation)
 
 | Choisir les réglages | Comparaison avant la copie |
@@ -246,7 +248,11 @@ L'option « Remplacer aussi les produits, pages et médias modifiés sur ce site
 
 **Identifiants** : chaque contenu garde son identifiant chaque fois que possible — en particulier **les numéros de commande**, connus des clients et des services de paiement. Si la copie utilise déjà le numéro pour une révision, un brouillon automatique ou une commande de test, celle-ci est déplacée ; si c'est un contenu créé sur la copie (une page, un menu…) qui gêne une commande, il est déplacé et ses références connues sont mises à jour (menus, page d'accueil, pages WooCommerce, blocs, images à la une) ; pour les autres contenus, c'est le contenu entrant qui reçoit un nouvel identifiant, et ses liens (image à la une, galerie, variations, client d'une commande…) suivent. Les correspondances sont conservées pour les synchronisations suivantes, et une réserve de 1 000 identifiants au-dessus de ceux du site d'origine éloigne le contenu créé ensuite sur la copie (les numéros de commande peuvent donc sauter d'environ 1 000 après la mise en ligne de la copie).
 
-**Limites** : une suppression définitive sur le site d'origine n'est pas reprise (une mise à la corbeille l'est) ; les réglages, extensions, thèmes, menus et widgets ne sont pas synchronisés (la copie fait référence ; des réglages précis se reprennent à part, voir ci-dessous) ; les données propres à d'autres extensions dans leurs propres tables (abonnements, réservations, fidélité, formulaires…) et les types de contenus personnalisés ne sont pas repris ; avec WPML, les liens entre traductions des contenus sont repris, pas les traductions de catégories créées entre-temps. Après une synchronisation, les statistiques WooCommerce des commandes concernées sont recalculées et les tables de recherche des produits régénérées.
+**Types de contenus personnalisés** : les contenus ajoutés par des extensions ou le thème (événements, portfolio, FAQ, modèles de blocs…) peuvent être repris. Après avoir collé le lien, la case « Autres contenus (types personnalisés) » devient active et propose les types du site d'origine (avec leur nombre de contenus) ; cochez ceux à synchroniser. Ils sont repris comme les articles et pages (métadonnées, catégories et taxonomies, traductions WPML, image à la une ; la version modifiée ici est conservée). Si l'extension qui déclare le type n'est pas active sur ce site, une alerte le signale : les contenus sont copiés mais restent invisibles tant qu'elle n'est pas activée. En SSH : `--custom-types=evenement,portfolio`. Les types propres à WooCommerce (produits, commandes, codes promo) gardent leur reprise dédiée.
+
+**Contenus disparus de l'origine** : une suppression définitive sur le site d'origine ne peut pas être « synchronisée » sans risque. L'analyse la **signale** à la place : les articles, pages, produits, codes promo et contenus personnalisés qui existent ici, ont été créés avant la copie et n'existent plus sur le site d'origine sont listés dans « Points à connaître » (jusqu'à 50 par type) et comptés dans la colonne « absents de l'origine ». Rien n'est supprimé ici : à vous de décider. Cette liste est une aide : un contenu créé ici avec une date passée peut y figurer.
+
+**Limites** : une suppression définitive sur le site d'origine n'est pas reprise (une mise à la corbeille l'est ; voir ci-dessus pour le signalement) ; les réglages, extensions, thèmes, menus et widgets ne sont pas synchronisés (la copie fait référence ; des réglages précis se reprennent à part, voir ci-dessous) ; les données propres à d'autres extensions dans leurs propres tables (abonnements, réservations, fidélité, formulaires…) ne sont pas reprises ; avec WPML, les liens entre traductions des contenus sont repris, pas les traductions de catégories créées entre-temps. Après une synchronisation, les statistiques WooCommerce des commandes concernées sont recalculées et les tables de recherche des produits régénérées.
 
 ### Reprendre des réglages d'un autre site
 

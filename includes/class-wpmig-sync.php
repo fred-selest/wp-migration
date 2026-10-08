@@ -45,7 +45,7 @@ class WPMIG_Sync {
 	/**
 	 * Kinds, in the order they are applied (dependencies first).
 	 */
-	const KINDS = array( 'media', 'customers', 'products', 'coupons', 'posts', 'orders', 'comments' );
+	const KINDS = array( 'media', 'customers', 'products', 'coupons', 'posts', 'custom', 'orders', 'comments' );
 
 	/**
 	 * Product meta that always come from the source (sales happen there).
@@ -102,6 +102,7 @@ class WPMIG_Sync {
 			'products'  => 'Produits',
 			'coupons'   => 'Codes promo',
 			'posts'     => 'Articles et pages',
+			'custom'    => 'Autres contenus (types personnalisés)',
 			'orders'    => 'Commandes',
 			'comments'  => 'Commentaires et avis',
 		);
@@ -120,6 +121,7 @@ class WPMIG_Sync {
 			'keep'    => 'conservés (modifiés ici)',
 			'same'    => 'déjà à jour',
 			'skip'    => 'ignorés (supprimés ici)',
+			'gone'    => 'absents de l\'origine (à examiner)',
 		);
 	}
 
@@ -332,6 +334,7 @@ class WPMIG_Sync {
 			'default'   => $default ? $local( $default ) : '',
 			'default_h' => $default ? wpmig_date( strtotime( $default . ' UTC' ) ) : '',
 			'packages'  => $packages,
+			'custom_types' => isset( $info['custom_types'] ) ? $info['custom_types'] : array(),
 		);
 	}
 
@@ -362,7 +365,7 @@ class WPMIG_Sync {
 	 * @return WPMIG_Sync
 	 * @throws WPMIG_Exception On error.
 	 */
-	public static function start( $link, array $kinds, $threshold = '', $force = false ) {
+	public static function start( $link, array $kinds, $threshold = '', $force = false, array $wanted_types = array() ) {
 		$current = self::current();
 		if ( $current && in_array( $current->state['status'], array( 'analyzing', 'importing', 'files', 'finalizing', 'undoing' ), true ) ) {
 			throw new WPMIG_Exception( 'Une synchronisation est déjà en cours.' );
@@ -378,6 +381,17 @@ class WPMIG_Sync {
 		}
 		if ( untrailingslashit( $info['home'] ) === untrailingslashit( home_url() ) ) {
 			throw new WPMIG_Exception( 'Ce lien a été créé sur ce site : créez-le sur le site d\'origine.' );
+		}
+		$types = array();
+		if ( in_array( 'custom', $kinds, true ) ) {
+			$available = isset( $info['custom_types'] ) ? wp_list_pluck( $info['custom_types'], 'name' ) : array();
+			$types     = array_values( array_intersect( array_map( 'strval', $wanted_types ), $available ) );
+			if ( ! $types ) {
+				if ( ! $available ) {
+					throw new WPMIG_Exception( 'Le site d\'origine n\'a pas de contenus de types personnalisés à synchroniser (ou il doit avoir WP Migration 1.13.0 ou plus récent).' );
+				}
+				throw new WPMIG_Exception( 'Choisissez au moins un type de contenu personnalisé : ' . implode( ', ', $available ) . '.' );
+			}
 		}
 		// Customers follow their orders.
 		if ( in_array( 'orders', $kinds, true ) && ! in_array( 'customers', $kinds, true ) ) {
@@ -425,6 +439,7 @@ class WPMIG_Sync {
 				// A margin catches the changes made while the copy was being made.
 				'since'     => gmdate( 'Y-m-d H:i:s', strtotime( $threshold . ' UTC' ) - self::MARGIN ),
 				'kinds'     => $kinds,
+				'types'     => $types,
 				'force'     => (bool) $force,
 				'started'   => time(),
 				'cursor'    => array( 0, 0 ),
@@ -453,6 +468,11 @@ class WPMIG_Sync {
 		$sync->dir();
 		file_put_contents( $sync->dir() . 'plan.php', "<?php exit; ?>\n" );
 		file_put_contents( $sync->dir() . 'files.php', "<?php exit; ?>\n" );
+		foreach ( $types as $type ) {
+			if ( ! post_type_exists( $type ) ) {
+				$sync->state['warnings'][] = sprintf( 'Le type de contenu « %s » n\'est pas enregistré sur ce site (extension inactive ?) : ses contenus seront copiés mais resteront invisibles tant que l\'extension correspondante n\'est pas activée.', $type );
+			}
+		}
 		if ( ! empty( $info['wpml'] ) && ! self::has( 'icl_translations' ) ) {
 			$sync->state['warnings'][] = 'WPML est utilisé sur le site d\'origine mais pas sur ce site : les liens entre traductions ne seront pas repris.';
 		}
@@ -652,6 +672,7 @@ class WPMIG_Sync {
 					'kind'  => $kind,
 					'since' => $this->state['since'],
 					'after' => $this->state['cursor'][1],
+					'types' => implode( ',', isset( $this->state['types'] ) ? $this->state['types'] : array() ),
 				)
 			);
 			$lines = '';
@@ -678,9 +699,116 @@ class WPMIG_Sync {
 			}
 		}
 		fclose( $plan );
-		if ( $this->state['cursor'][0] >= count( $this->state['kinds'] ) ) {
+		if ( $this->state['cursor'][0] >= count( $this->state['kinds'] ) && $this->gone( $deadline ) ) {
+			$gone                   = $this->count_gone();
 			$this->state['status']  = 'ready';
-			$this->state['message'] = $this->state['lines'] ? 'Analyse terminée : vérifiez puis lancez l\'import.' : 'Rien à synchroniser : ce site est à jour.';
+			$this->state['message'] = $this->state['lines'] ? 'Analyse terminée : vérifiez puis lancez l\'import.' : ( $gone ? 'Rien à importer, mais des contenus ont disparu du site d\'origine : voir les remarques.' : 'Rien à synchroniser : ce site est à jour.' );
+		}
+	}
+
+	/**
+	 * Number of contents that have disappeared from the source.
+	 *
+	 * @return int
+	 */
+	private function count_gone() {
+		$n = 0;
+		foreach ( $this->state['counts'] as $counts ) {
+			$n += isset( $counts['gone'] ) ? (int) $counts['gone'] : 0;
+		}
+		return $n;
+	}
+
+	/**
+	 * Contents that exist here, were created before the copy, and no longer exist on
+	 * the source: permanently deleted there since the copy. They are only reported,
+	 * never deleted here.
+	 *
+	 * @param float $deadline Microtime or 0.
+	 * @return bool True when finished.
+	 */
+	private function gone( $deadline ) {
+		global $wpdb;
+		$kinds = array_values( array_intersect( array( 'posts', 'custom', 'products', 'coupons' ), $this->state['kinds'] ) );
+		if ( ! isset( $this->state['gone'] ) ) {
+			$this->state['gone'] = array( 0, 0 );
+		}
+		while ( $this->state['gone'][0] < count( $kinds ) ) {
+			$kind = $kinds[ $this->state['gone'][0] ];
+			$file = $this->dir() . 'gone-' . $kind . '.php';
+			if ( 0 === (int) $this->state['gone'][1] ) {
+				file_put_contents( $file, "<?php exit; ?>\n" );
+			}
+			$page = $this->source(
+				array(
+					'op'    => 'fps',
+					'kind'  => $kind,
+					'types' => implode( ',', isset( $this->state['types'] ) ? $this->state['types'] : array() ),
+					'after' => $this->state['gone'][1],
+				)
+			);
+			if ( ! empty( $page['fps'] ) ) {
+				file_put_contents( $file, implode( "\n", $page['fps'] ) . "\n", FILE_APPEND );
+			}
+			$this->state['message'] = 'Recherche des contenus disparus : ' . self::labels()[ $kind ] . '…';
+			if ( ! empty( $page['next'] ) ) {
+				$this->state['gone'][1] = (int) $page['next'];
+			} else {
+				$this->find_gone( $kind, $file );
+				$this->state['gone'] = array( $this->state['gone'][0] + 1, 0 );
+			}
+			if ( $deadline && microtime( true ) >= $deadline ) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	/**
+	 * Compare the local contents of a kind with the fingerprints of the source.
+	 *
+	 * @param string $kind Kind.
+	 * @param string $file File of the fingerprints of the source.
+	 */
+	private function find_gone( $kind, $file ) {
+		global $wpdb;
+		$types = array(
+			'posts'    => array( 'post', 'page' ),
+			'products' => array( 'product' ),
+			'coupons'  => array( 'shop_coupon' ),
+			'custom'   => isset( $this->state['types'] ) ? $this->state['types'] : array(),
+		);
+		if ( empty( $types[ $kind ] ) ) {
+			return;
+		}
+		$copy = $this->state['copy'] ? $this->state['copy'] : $this->state['threshold'];
+		$set  = array();
+		foreach ( (array) file( $file, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES ) as $i => $line ) {
+			$parts = explode( '|', $line, 2 );
+			if ( $i && 2 === count( $parts ) ) {
+				$set[ (int) $parts[0] ] = $parts[1];
+			}
+		}
+		// Contents imported by an earlier synchronization may have another id here.
+		$source_of = array();
+		foreach ( (array) $wpdb->get_results( $wpdb->prepare( 'SELECT target_id, source_id FROM ' . WPMIG_SQL::quote_id( $wpdb->prefix . self::MAP ) . " WHERE source = %s AND kind = 'post'", $this->source_key() ), ARRAY_N ) as $m ) { // phpcs:ignore WordPress.DB.PreparedSQL
+			$source_of[ (int) $m[0] ] = (int) $m[1];
+		}
+		$marks = implode( ', ', array_fill( 0, count( $types[ $kind ] ), '%s' ) );
+		$sql   = "SELECT ID, post_type, post_title, post_date_gmt FROM $wpdb->posts WHERE post_type IN ($marks) AND post_status NOT IN ('auto-draft', 'trash', 'inherit') AND post_date_gmt > '0000-00-00 00:00:00' AND post_date_gmt < %s ORDER BY ID";
+		$rows  = $wpdb->get_results( $wpdb->prepare( $sql, array_merge( $types[ $kind ], array( $copy ) ) ), ARRAY_A ); // phpcs:ignore WordPress.DB.PreparedSQL
+		$shown = 0;
+		foreach ( (array) $rows as $r ) {
+			$sid = isset( $source_of[ (int) $r['ID'] ] ) ? $source_of[ (int) $r['ID'] ] : (int) $r['ID'];
+			if ( isset( $set[ $sid ] ) && $set[ $sid ] === $r['post_type'] . '|' . $r['post_date_gmt'] ) {
+				continue;
+			}
+			$this->count( $kind, 'gone' );
+			if ( $shown++ < 50 ) {
+				$obj   = get_post_type_object( $r['post_type'] );
+				$label = $obj ? $obj->labels->singular_name : $r['post_type'];
+				$this->note( $kind, (int) $r['ID'], sprintf( '%s %s (n° %d, publié le %s) n\'existe plus sur le site d\'origine : supprimé là-bas depuis la copie ? Il est conservé ici.', $label, '' !== $r['post_title'] ? '« ' . wp_html_excerpt( $r['post_title'], 60, '…' ) . ' »' : '', $r['ID'], mysql2date( 'd/m/Y', $r['post_date_gmt'] ) ), 'gone' );
+			}
 		}
 	}
 
@@ -968,14 +1096,14 @@ class WPMIG_Sync {
 		$counts = array();
 		foreach ( $this->state['counts'] as $kind => $by_action ) {
 			foreach ( $by_action as $action => $n ) {
-				if ( in_array( $action, array( 'keep', 'same', 'skip' ), true ) ) {
+				if ( in_array( $action, array( 'keep', 'same', 'skip', 'gone' ), true ) ) {
 					$counts[ $kind ][ $action ] = $n;
 				}
 			}
 		}
 		$notes = array();
 		foreach ( $this->state['notes'] as $note ) {
-			if ( isset( $note[3] ) && in_array( $note[3], array( 'keep', 'same', 'skip' ), true ) ) {
+			if ( isset( $note[3] ) && in_array( $note[3], array( 'keep', 'same', 'skip', 'gone' ), true ) ) {
 				$notes[] = $note;
 			}
 		}

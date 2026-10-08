@@ -133,6 +133,16 @@ class WPMIG_Sync_Source {
 						self::scan(
 							isset( $req['kind'] ) ? (string) $req['kind'] : '',
 							isset( $req['since'] ) ? (string) $req['since'] : '',
+							isset( $req['after'] ) ? (int) $req['after'] : 0,
+							isset( $req['types'] ) ? (string) $req['types'] : ''
+						)
+					);
+					break;
+				case 'fps':
+					self::json(
+						self::fingerprints(
+							isset( $req['kind'] ) ? (string) $req['kind'] : '',
+							isset( $req['types'] ) ? (string) $req['types'] : '',
 							isset( $req['after'] ) ? (int) $req['after'] : 0
 						)
 					);
@@ -247,6 +257,7 @@ class WPMIG_Sync_Source {
 			'woocommerce'  => defined( 'WC_VERSION' ) ? WC_VERSION : '',
 			'hpos'         => self::hpos(),
 			'wpml'         => self::has_table( 'icl_translations' ),
+			'custom_types' => self::custom_types(),
 			'time'         => gmdate( 'Y-m-d H:i:s' ),
 			'packages'     => self::packages(),
 			'max'          => array(
@@ -299,15 +310,120 @@ class WPMIG_Sync_Source {
 	}
 
 	/**
+	 * Post types that can be synchronized as "custom" contents: those with an
+	 * administration screen, except the ones that have their own kind or are
+	 * technical.
+	 *
+	 * @return array name, label, count.
+	 */
+	public static function custom_types() {
+		global $wpdb;
+		$skip = array(
+			'post', 'page', 'attachment', 'product', 'product_variation', 'shop_coupon', 'shop_order', 'shop_order_refund',
+			'nav_menu_item', 'revision', 'wp_template', 'wp_template_part', 'wp_global_styles', 'wp_navigation',
+			'customize_changeset', 'oembed_cache', 'user_request', 'wp_font_family', 'wp_font_face', 'scheduled-action',
+		);
+		$out = array();
+		foreach ( get_post_types( array( 'show_ui' => true ), 'objects' ) as $name => $type ) {
+			if ( in_array( $name, $skip, true ) ) {
+				continue;
+			}
+			$count = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM $wpdb->posts WHERE post_type = %s AND post_status <> 'auto-draft'", $name ) );
+			if ( $count ) {
+				$out[] = array(
+					'name'  => $name,
+					'label' => isset( $type->labels->name ) ? (string) $type->labels->name : $name,
+					'count' => $count,
+				);
+			}
+		}
+		return $out;
+	}
+
+	/**
+	 * Quoted list of the requested custom types (only the allowed ones).
+	 *
+	 * @param string $types Comma separated names.
+	 * @return string SQL list.
+	 * @throws WPMIG_Exception When no valid type is requested.
+	 */
+	private static function types_sql( $types ) {
+		global $wpdb;
+		$allowed = wp_list_pluck( self::custom_types(), 'name' );
+		$wanted  = array_values( array_intersect( array_filter( array_map( 'trim', explode( ',', (string) $types ) ), 'strlen' ), $allowed ) );
+		if ( ! $wanted ) {
+			throw new WPMIG_Exception( 'Aucun type de contenu personnalisé valide.' );
+		}
+		return implode( ', ', array_map( function ( $t ) use ( $wpdb ) {
+			return $wpdb->prepare( '%s', $t );
+		}, $wanted ) );
+	}
+
+	/**
+	 * Is a post of an allowed custom type?
+	 *
+	 * @param int $id Post id.
+	 * @return bool
+	 */
+	private static function is_custom_post( $id ) {
+		global $wpdb;
+		$type = $wpdb->get_var( $wpdb->prepare( "SELECT post_type FROM $wpdb->posts WHERE ID = %d", $id ) );
+		return $type && in_array( $type, wp_list_pluck( self::custom_types(), 'name' ), true );
+	}
+
+	/**
+	 * Fingerprints of every content of a kind (not only the recent ones), to find
+	 * what has disappeared from this site.
+	 *
+	 * @param string $kind  posts, custom, products or coupons.
+	 * @param string $types Custom types.
+	 * @param int    $after Last id of the previous page.
+	 * @return array fps ("id|type|date" strings), next (0 when finished).
+	 * @throws WPMIG_Exception On invalid parameters.
+	 */
+	public static function fingerprints( $kind, $types, $after ) {
+		global $wpdb;
+		switch ( $kind ) {
+			case 'posts':
+				$where = "post_type IN ('post', 'page')";
+				break;
+			case 'custom':
+				$where = 'post_type IN (' . self::types_sql( $types ) . ')';
+				break;
+			case 'products':
+				$where = "post_type = 'product'";
+				break;
+			case 'coupons':
+				$where = "post_type = 'shop_coupon'";
+				break;
+			default:
+				throw new WPMIG_Exception( 'Type de contenu inconnu.' );
+		}
+		$limit = self::PAGE * 4;
+		$rows  = $wpdb->get_results( $wpdb->prepare( "SELECT ID, post_type, post_date_gmt FROM $wpdb->posts WHERE $where AND post_status <> 'auto-draft' AND ID > %d ORDER BY ID LIMIT %d", $after, $limit ), ARRAY_A ); // phpcs:ignore WordPress.DB.PreparedSQL
+		$fps   = array();
+		$last  = 0;
+		foreach ( (array) $rows as $r ) {
+			$fps[] = $r['ID'] . '|' . $r['post_type'] . '|' . $r['post_date_gmt'];
+			$last  = (int) $r['ID'];
+		}
+		return array(
+			'fps'  => $fps,
+			'next' => count( $fps ) >= $limit ? $last : 0,
+		);
+	}
+
+	/**
 	 * Objects created or modified since a date.
 	 *
 	 * @param string $kind  Kind.
 	 * @param string $since GMT date (Y-m-d H:i:s).
 	 * @param int    $after Last id of the previous page.
+	 * @param string $types Custom post types (kind "custom"), comma separated.
 	 * @return array items (id, fingerprint, created, modified), next (0 when finished).
 	 * @throws WPMIG_Exception On invalid parameters.
 	 */
-	public static function scan( $kind, $since, $after ) {
+	public static function scan( $kind, $since, $after, $types = '' ) {
 		global $wpdb;
 		if ( ! preg_match( '/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/', $since ) ) {
 			throw new WPMIG_Exception( 'Date invalide.' );
@@ -325,6 +441,9 @@ class WPMIG_Sync_Source {
 				break;
 			case 'posts':
 				$sql = "SELECT $post_cols FROM $p WHERE post_type IN ('post', 'page') AND post_status <> 'auto-draft' AND $changed";
+				break;
+			case 'custom':
+				$sql = "SELECT $post_cols FROM $p WHERE post_type IN (" . self::types_sql( $types ) . ") AND post_status <> 'auto-draft' AND $changed";
 				break;
 			case 'products':
 				// Stock changes made by orders do not update the product dates: products sold since the date are included.
@@ -425,6 +544,9 @@ class WPMIG_Sync_Source {
 		$out = array();
 		foreach ( $ids as $id ) {
 			switch ( $kind ) {
+				case 'custom':
+					$obj  = self::is_custom_post( $id ) ? self::post_object( $id ) : null;
+					break;
 				case 'media':
 				case 'posts':
 				case 'coupons':

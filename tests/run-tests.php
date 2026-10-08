@@ -453,7 +453,7 @@ foreach ( array(
 		check( $name, 'exception', 'exception' );
 	}
 }
-check( 'ordre d\'application : dépendances d\'abord', array( 'media', 'customers', 'products', 'coupons', 'posts', 'orders', 'comments' ), WPMIG_Sync::KINDS );
+check( 'ordre d\'application : dépendances d\'abord', array( 'media', 'customers', 'products', 'coupons', 'posts', 'custom', 'orders', 'comments' ), WPMIG_Sync::KINDS );
 
 echo "\nRéglages repris d'un autre site\n";
 if ( ! function_exists( 'size_format' ) ) {

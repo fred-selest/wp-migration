@@ -69,6 +69,7 @@
 .wpmig #wpmig-compare-panel:not(.wpmig-compare-showall) .wpmig-compare-same,.wpmig #wpmig-compare-panel:not(.wpmig-compare-showall) .wpmig-compare-same-only{display:none}
 .wpmig #wpmig-compare-panel.wpmig-compare-showall .wpmig-compare-allsame{display:none}
 .wpmig .wpmig-compare-allsame{color:#50575e;margin:4px 0 14px}
+.wpmig .wpmig-sync-types{margin:6px 0 0 24px}.wpmig .wpmig-sync-types label{display:block}
 @media (max-width:782px){.wpmig .wpmig-actions{justify-content:flex-start}}
 /* Tabs and home */
 .wpmig .wpmig-tabs{margin:12px 0 0;max-width:1100px}

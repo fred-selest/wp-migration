@@ -232,9 +232,10 @@ class WPMIG_Admin {
 		$kinds = isset( $_POST['kinds'] ) ? array_map( 'sanitize_key', explode( ',', sanitize_text_field( wp_unslash( $_POST['kinds'] ) ) ) ) : array();
 		$since = isset( $_POST['since'] ) ? sanitize_text_field( wp_unslash( $_POST['since'] ) ) : '';
 		$force = ! empty( $_POST['force'] );
+		$types = isset( $_POST['types'] ) ? array_map( 'sanitize_key', explode( ',', sanitize_text_field( wp_unslash( $_POST['types'] ) ) ) ) : array();
 		// phpcs:enable
 		try {
-			$sync = WPMIG_Sync::start( $link, $kinds, $since, $force );
+			$sync = WPMIG_Sync::start( $link, $kinds, $since, $force, $types );
 			wp_send_json_success( $sync->step( microtime( true ) + WPMIG_Plugin::time_budget() ) );
 		} catch ( Exception $e ) {
 			wp_send_json_error( array( 'message' => $e->getMessage() ) );
@@ -1528,14 +1529,20 @@ class WPMIG_Admin {
 		?>
 		<div class="wpmig-card wpmig-sync" id="wpmig-sync" data-state="<?php echo esc_attr( $current ? wp_json_encode( $current->public_state() ) : '' ); ?>" data-labels="<?php echo esc_attr( wp_json_encode( array( 'kinds' => $labels, 'actions' => WPMIG_Sync::action_labels(), 'done' => WPMIG_Sync::done_labels() ) ) ); ?>">
 			<h2>2. Sur la copie de travail : récupérer le contenu</h2>
-			<p>Vous travaillez sur ce site pendant que le site d'origine reste en ligne ? Récupérez ici ce qui y a été créé ou modifié depuis la copie : <strong>commandes, clients, produits (et leur stock), codes promo, articles, pages, médias, avis</strong>. Les numéros de commande sont conservés ; vos modifications faites ici sur les produits, pages et médias sont gardées. Une analyse montre tout avant l'import, et une synchronisation peut être annulée.</p>
+			<p>Vous travaillez sur ce site pendant que le site d'origine reste en ligne ? Récupérez ici ce qui y a été créé ou modifié depuis la copie : <strong>commandes, clients, produits (et leur stock), codes promo, articles, pages, médias, avis</strong> et contenus d'autres types (événements, portfolio…). Les numéros de commande sont conservés ; vos modifications faites ici sur les produits, pages et médias sont gardées. Une analyse montre tout avant l'import, et une synchronisation peut être annulée.</p>
 			<form id="wpmig-sync-form" <?php echo $current ? 'hidden' : ''; ?>>
 				<p><label for="wpmig-sync-link"><strong>Lien de synchronisation</strong> (créé sur le site d'origine, avec WP Migration 1.5.0 ou plus récent)</label><br>
 				<input type="url" id="wpmig-sync-link" class="large-text code" required placeholder="https://site-origine.fr/wp-admin/admin-ajax.php?action=wpmig_sync&amp;key=…"></p>
 				<fieldset class="wpmig-sync-kinds"><legend><strong>Contenus</strong></legend>
 					<?php foreach ( $labels as $kind => $label ) : ?>
-						<label><input type="checkbox" name="kinds" value="<?php echo esc_attr( $kind ); ?>" checked> <?php echo esc_html( $label ); ?></label>
+						<?php if ( 'custom' === $kind ) : ?>
+							<label class="wpmig-sync-custom"><input type="checkbox" name="kinds" value="custom" id="wpmig-sync-custom" disabled> <?php echo esc_html( $label ); ?></label>
+						<?php else : ?>
+							<label><input type="checkbox" name="kinds" value="<?php echo esc_attr( $kind ); ?>" checked> <?php echo esc_html( $label ); ?></label>
+						<?php endif; ?>
 					<?php endforeach; ?>
+					<div id="wpmig-sync-types" class="wpmig-sync-types" hidden></div>
+					<p class="description" id="wpmig-sync-custom-help">Types de contenus ajoutés par des extensions ou le thème (événements, portfolio, FAQ…) : proposés après avoir collé le lien, s'il y en a sur le site d'origine.</p>
 				</fieldset>
 				<p><label for="wpmig-sync-since"><strong>Date de la copie</strong></label><br>
 				<input type="datetime-local" id="wpmig-sync-since">
