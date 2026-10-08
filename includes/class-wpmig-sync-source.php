@@ -141,6 +141,9 @@ class WPMIG_Sync_Source {
 					$ids = isset( $req['ids'] ) ? array_slice( array_filter( array_map( 'intval', explode( ',', (string) $req['ids'] ) ) ), 0, self::BATCH ) : array();
 					self::json( array( 'objects' => self::fetch( isset( $req['kind'] ) ? (string) $req['kind'] : '', $ids ) ) );
 					break;
+				case 'profile':
+					self::json( array( 'profile' => WPMIG_Compare::profile() ) );
+					break;
 				case 'options':
 					if ( isset( $req['names'] ) ) {
 						self::json( array( 'values' => WPMIG_Settings::source_get( array_filter( explode( ',', (string) $req['names'] ), 'strlen' ) ) ) );

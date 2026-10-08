@@ -713,6 +713,64 @@ class WPMIG_CLI {
 	}
 
 	/**
+	 * Compare this site with another one (read only), through its synchronization link.
+	 *
+	 * ## OPTIONS
+	 *
+	 * <link>
+	 * : Synchronization link created on the other site.
+	 *
+	 * [--all]
+	 * : Also list the identical lines.
+	 *
+	 * [--format=<format>]
+	 * : table (default) or json.
+	 *
+	 * ## EXAMPLES
+	 *
+	 *     wp migration compare 'https://www.old.fr/wp-admin/admin-ajax.php?action=wpmig_sync&key=…'
+	 *
+	 * @param array $args       Arguments.
+	 * @param array $assoc_args Options.
+	 */
+	public function compare( $args, $assoc_args ) {
+		try {
+			$res = WPMIG_Compare::run( $args[0] );
+		} catch ( WPMIG_Exception $e ) {
+			WP_CLI::error( $e->getMessage() );
+		}
+		if ( isset( $assoc_args['format'] ) && 'json' === $assoc_args['format'] ) {
+			WP_CLI::line( wp_json_encode( $res, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES ) );
+			return;
+		}
+		$names = array(
+			'same'       => '=',
+			'diff'       => 'diff',
+			'only_here'  => 'ici seul',
+			'only_there' => 'la-bas seul',
+			'info'       => 'info',
+		);
+		WP_CLI::log( 'Autre site : ' . $res['source'] );
+		foreach ( $res['sections'] as $section ) {
+			$lines = array();
+			foreach ( $section['rows'] as $row ) {
+				if ( 'same' === $row['status'] && ! isset( $assoc_args['all'] ) ) {
+					continue;
+				}
+				$lines[] = sprintf( '  %-12s %-40s  ici : %s | la-bas : %s', $names[ $row['status'] ], $row['label'], '' === $row['here'] ? '(absent)' : $row['here'], '' === $row['there'] ? '(absent)' : $row['there'] );
+			}
+			if ( $lines ) {
+				WP_CLI::log( "\n" . $section['title'] );
+				foreach ( $lines as $line ) {
+					WP_CLI::log( $line );
+				}
+			}
+		}
+		$s = $res['summary'];
+		WP_CLI::success( sprintf( '%d différence(s) à examiner, %d indicative(s), %d identique(s).', $s['diff'] + $s['only_here'] + $s['only_there'], $s['info'], $s['same'] ) );
+	}
+
+	/**
 	 * Print the result of a search and replace.
 	 *
 	 * @param array $state Public state.

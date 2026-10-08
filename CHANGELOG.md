@@ -3,6 +3,14 @@
 Toutes les évolutions notables de WP Migration sont consignées ici.
 Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le projet respecte le [versionnage sémantique](https://semver.org/lang/fr/).
 
+## [1.10.0] - 2026-10-08
+
+### Ajouté
+- **Comparer ce site avec un autre** (onglet Synchronisation), en lecture seule sur les deux sites, avec le lien de synchronisation de l'autre site : versions de WordPress, de PHP et de la base de données, thème, extensions (version, active ou non), réglages usuels, moyens de paiement activés, langues (WPML ou Polylang), menus et nombre de contenus. Chaque ligne est identique, différente, présente d'un seul côté ou indicative ; les lignes identiques sont repliées. Ni mot de passe ni clé ne sont transmis.
+- Le bouton **Reprendre** d'un réglage différent ouvre « Reprendre des réglages d'un autre site » sur ce réglage.
+- `wp migration compare` (`--all`, `--format=json`).
+- Côté autre site : nouvelle opération de lecture `profile` du lien de synchronisation.
+
 ## [1.9.0] - 2026-10-08
 
 ### Ajouté
@@ -127,6 +135,7 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le pr
 - Protection de l'installeur par mot de passe.
 - Compatibilité WordPress 4.9 à 7.1 et PHP 5.6 à 8.4.
 
+[1.10.0]: https://github.com/fred-selest/wp-migration/releases/tag/v1.10.0
 [1.9.0]: https://github.com/fred-selest/wp-migration/releases/tag/v1.9.0
 [1.8.0]: https://github.com/fred-selest/wp-migration/releases/tag/v1.8.0
 [1.7.0]: https://github.com/fred-selest/wp-migration/releases/tag/v1.7.0

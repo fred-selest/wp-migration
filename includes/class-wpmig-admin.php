@@ -30,7 +30,7 @@ class WPMIG_Admin {
 		add_action( 'wp_ajax_wpmig_transfer_link', array( __CLASS__, 'ajax_transfer_link' ) );
 		add_action( 'wp_ajax_wpmig_transfer_revoke', array( __CLASS__, 'ajax_transfer_revoke' ) );
 		add_action( 'wp_ajax_wpmig_import_prepare', array( __CLASS__, 'ajax_import_prepare' ) );
-		foreach ( array( 'sync_probe', 'sync_start', 'sync_step', 'sync_confirm', 'sync_undo', 'sync_dismiss', 'sync_link', 'sync_revoke', 'search_start', 'search_step', 'search_confirm', 'search_undo', 'search_dismiss', 'settings_list', 'settings_preview', 'settings_apply', 'settings_undo' ) as $action ) {
+		foreach ( array( 'sync_probe', 'sync_start', 'sync_step', 'sync_confirm', 'sync_undo', 'sync_dismiss', 'sync_link', 'sync_revoke', 'search_start', 'search_step', 'search_confirm', 'search_undo', 'search_dismiss', 'settings_list', 'settings_preview', 'settings_apply', 'settings_undo', 'compare_run' ) as $action ) {
 			add_action( 'wp_ajax_wpmig_' . $action, array( __CLASS__, 'ajax_' . $action ) );
 		}
 		add_action( 'admin_post_wpmig_download', array( __CLASS__, 'download' ) );
@@ -437,6 +437,19 @@ class WPMIG_Admin {
 	}
 
 	/**
+	 * Compare this site with another one (read only).
+	 */
+	public static function ajax_compare_run() {
+		self::check_ajax();
+		$link = isset( $_POST['link'] ) ? trim( sanitize_text_field( wp_unslash( $_POST['link'] ) ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification
+		try {
+			wp_send_json_success( WPMIG_Compare::run( $link ) );
+		} catch ( Exception $e ) {
+			wp_send_json_error( array( 'message' => $e->getMessage() ) );
+		}
+	}
+
+	/**
 	 * Close the search & replace panel.
 	 */
 	public static function ajax_search_dismiss() {
@@ -748,6 +761,7 @@ class WPMIG_Admin {
 				self::render_sync_source();
 				self::render_sync();
 				self::render_settings_pull();
+				self::render_compare();
 				break;
 			case 'search':
 				self::render_search();
@@ -1506,6 +1520,24 @@ class WPMIG_Admin {
 					</tbody></table>
 				</details>
 			<?php endif; ?>
+		</div>
+		<?php
+	}
+
+	/**
+	 * Comparison with another site.
+	 */
+	private static function render_compare() {
+		?>
+		<div class="wpmig-card wpmig-compare" id="wpmig-compare">
+			<h2>Comparer ce site avec un autre</h2>
+			<p>Quelles extensions, quels réglages ou quelles langues diffèrent entre ce site et le site d'origine (ou sa copie) ? La comparaison est <strong>en lecture seule</strong> : rien n'est modifié sur aucun des deux sites. Elle ne transmet aucun mot de passe ni clé.</p>
+			<form id="wpmig-compare-form">
+				<p><label for="wpmig-compare-link"><strong>Lien de synchronisation</strong> de l'autre site (WP Migration 1.10.0 ou plus récent)</label><br>
+				<input type="url" id="wpmig-compare-link" class="large-text code" required placeholder="https://autre-site.fr/wp-admin/admin-ajax.php?action=wpmig_sync&amp;key=…">
+				<button type="submit" class="button button-primary">Comparer</button></p>
+			</form>
+			<div id="wpmig-compare-panel"></div>
 		</div>
 		<?php
 	}

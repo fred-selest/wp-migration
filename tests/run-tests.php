@@ -429,6 +429,7 @@ require dirname( __DIR__ ) . '/includes/class-wpmig-sync-source.php';
 require dirname( __DIR__ ) . '/includes/class-wpmig-sync-db.php';
 require dirname( __DIR__ ) . '/includes/class-wpmig-sync.php';
 require dirname( __DIR__ ) . '/includes/class-wpmig-settings.php';
+require dirname( __DIR__ ) . '/includes/class-wpmig-compare.php';
 check( 'empreinte d\'un contenu', 'shop_order|2026-09-29 05:25:04', WPMIG_Sync_Source::fingerprint( 'orders', array( 'post_type' => 'shop_order', 'post_date_gmt' => '2026-09-29 05:25:04' ) ) );
 check( 'empreinte d\'un client', 'client-1', WPMIG_Sync_Source::fingerprint( 'customers', array( 'user_login' => 'client-1' ) ) );
 check( 'empreinte d\'un commentaire', '2026-09-29 05:25:07|marie@example.org', WPMIG_Sync_Source::fingerprint( 'comments', array( 'post_date_gmt' => '2026-09-29 05:25:07', 'comment_author_email' => 'Marie@Example.org' ) ) );
@@ -485,6 +486,72 @@ check( 'différence de texte simple', array( '« a » → « b »' ), WPMIG_Sett
 check( 'texte secret masqué', array( '•••••• → ••••••' ), WPMIG_Settings::changes( 'my_token', 'a', 'b' ) );
 check( 'objet sérialisé non lu', array( '« O:8:"stdClass":0:{} » → « b »' ), WPMIG_Settings::changes( 'x', 'O:8:"stdClass":0:{}', 'b' ) );
 check( 'valeurs longues résumées', array( '300 o → 400 o' ), WPMIG_Settings::changes( 'x', str_repeat( 'a', 300 ), str_repeat( 'b', 400 ) ) );
+
+echo "\nComparaison de deux sites\n";
+$here  = array(
+	'site'      => array( 'Adresse' => 'http://dev.local', 'WordPress' => '6.8', 'PHP' => '8.2.1', 'Préfixe des tables' => 'wp_' ),
+	'theme'     => array( 'stylesheet' => 'astra-child', 'template' => 'astra', 'name' => 'Astra enfant', 'version' => '1.0' ),
+	'plugins'   => array(
+		'a/a.php' => array( 'name' => 'Alpha', 'version' => '1.0', 'active' => 1 ),
+		'b/b.php' => array( 'name' => 'Beta', 'version' => '2.0', 'active' => 1 ),
+		'c/c.php' => array( 'name' => 'Gamma', 'version' => '1.0', 'active' => 0 ),
+		'd/d.php' => array( 'name' => 'Delta', 'version' => '3.0', 'active' => 1 ),
+	),
+	'settings'  => array( 'woocommerce_currency' => array( 'label' => 'WooCommerce : devise', 'value' => 'EUR' ), 'posts_per_page' => array( 'label' => 'Articles par page', 'value' => '10' ) ),
+	'gateways'  => array( 'woocommerce_cheque_settings' ),
+	'languages' => array( 'plugin' => 'Polylang', 'default' => 'fr', 'active' => array( 'de', 'fr' ) ),
+	'menus'     => array( 'count' => 2, 'locations' => 1 ),
+	'counts'    => array( 'Articles publiés' => 10, 'Commandes' => 5 ),
+);
+$there = array(
+	'site'      => array( 'Adresse' => 'https://www.prod.fr', 'WordPress' => '6.8', 'PHP' => '7.4.33', 'Préfixe des tables' => 'wp_prod_' ),
+	'theme'     => array( 'stylesheet' => 'astra-child', 'template' => 'astra', 'name' => 'Astra enfant', 'version' => '1.0' ),
+	'plugins'   => array(
+		'a/a.php' => array( 'name' => 'Alpha', 'version' => '1.0', 'active' => 1 ),
+		'b/b.php' => array( 'name' => 'Beta', 'version' => '2.1', 'active' => 1 ),
+		'c/c.php' => array( 'name' => 'Gamma', 'version' => '1.0', 'active' => 1 ),
+		'e/e.php' => array( 'name' => 'Epsilon', 'version' => '1.0', 'active' => 1 ),
+	),
+	'settings'  => array( 'woocommerce_currency' => array( 'label' => 'WooCommerce : devise', 'value' => 'EUR' ), 'posts_per_page' => array( 'label' => 'Articles par page', 'value' => '12' ) ),
+	'gateways'  => array( 'woocommerce_cheque_settings', 'woocommerce_monetico_settings' ),
+	'languages' => array( 'plugin' => 'Polylang', 'default' => 'fr', 'active' => array( 'de', 'en', 'fr' ) ),
+	'menus'     => array( 'count' => 2, 'locations' => 2 ),
+	'counts'    => array( 'Articles publiés' => 14, 'Commandes' => 5 ),
+);
+$cmp  = WPMIG_Compare::diff( $here, $there );
+$rows = array();
+foreach ( $cmp['sections'] as $section ) {
+	foreach ( $section['rows'] as $row ) {
+		$rows[ $section['title'] . '|' . $row['label'] ] = $row;
+	}
+}
+check( 'origine lue', 'https://www.prod.fr', $cmp['source'] );
+check( 'adresse différente : indicatif', 'info', $rows['Environnement|Adresse']['status'] );
+check( 'préfixe différent : indicatif', 'info', $rows['Environnement|Préfixe des tables']['status'] );
+check( 'PHP différent', 'diff', $rows['Environnement|PHP']['status'] );
+check( 'WordPress identique', 'same', $rows['Environnement|WordPress']['status'] );
+check( 'thème identique', 'same', $rows['Thème|Thème actif']['status'] );
+check( 'extension identique', 'same', $rows['Extensions|Alpha']['status'] );
+check( 'extension : version différente', 'diff', $rows['Extensions|Beta']['status'] );
+check( 'extension : active ici, inactive là-bas', 'diff', $rows['Extensions|Gamma']['status'] );
+check( 'extension absente de l\'autre site', 'only_here', $rows['Extensions|Delta']['status'] );
+check( 'extension absente de ce site', 'only_there', $rows['Extensions|Epsilon']['status'] );
+check( 'réglage identique', 'same', $rows['Réglages|WooCommerce : devise']['status'] );
+check( 'réglage différent', 'diff', $rows['Réglages|Articles par page']['status'] );
+check( 'réglage : nom d\'option conservé', 'posts_per_page', $rows['Réglages|Articles par page']['option'] );
+$pay = array();
+foreach ( $cmp['sections'][3]['rows'] as $row ) {
+	if ( 'Moyen de paiement actif' === $row['label'] ) {
+		$pay[ $row['option'] ] = $row['status'];
+	}
+}
+check( 'moyens de paiement', array( 'woocommerce_cheque_settings' => 'same', 'woocommerce_monetico_settings' => 'only_there' ), $pay );
+check( 'langues actives différentes', 'diff', $rows['Langues et menus|Langues actives']['status'] );
+check( 'emplacements de menu différents', 'diff', $rows['Langues et menus|Emplacements de menu utilisés']['status'] );
+check( 'compteurs différents : indicatif', 'info', $rows['Contenus|Articles publiés']['status'] );
+check( 'compteurs identiques', 'same', $rows['Contenus|Commandes']['status'] );
+check( 'total des différences à examiner', 9, $cmp['summary']['diff'] + $cmp['summary']['only_here'] + $cmp['summary']['only_there'] );
+check( 'profil vide sans erreur', true, is_array( WPMIG_Compare::diff( array(), array() ) ) );
 
 echo "\n" . ( $count - $failures ) . '/' . $count . " tests réussis\n";
 exit( $failures ? 1 : 0 );

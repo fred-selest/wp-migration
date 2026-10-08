@@ -60,6 +60,10 @@ En un clic (sauvegarde complète ou base de données seule), ou avec l'assistant
 |---|---|
 | ![Choisir les réglages](docs/screenshots/27-reglages-selection.png) | ![Comparaison des réglages](docs/screenshots/28-reglages-comparaison.png) |
 
+### Comparer deux sites (onglet Synchronisation)
+
+![Comparaison de deux sites](docs/screenshots/29-comparaison-sites.png)
+
 ### Rechercher et remplacer dans la base de données
 
 | Formulaire (deux champs, options avancées repliées) | Analyse avant remplacement |
@@ -126,7 +130,7 @@ Le menu **WP Migration** s'ouvre sur une **page d'accueil** qui pose la question
 | **Accueil** | choisir ce que l'on veut faire, voir l'état et le rapport de la dernière migration |
 | **Sauvegardes** | créer une sauvegarde en un clic, la personnaliser, télécharger, lancer un transfert direct, supprimer |
 | **Recevoir un site** | remplacer ce site par une sauvegarde (FTP ou installeur) ou par un autre site, sans FTP, avec un lien de transfert |
-| **Synchronisation** | 1. autoriser la synchronisation (site en ligne), 2. récupérer les commandes et contenus (copie de travail), 3. reprendre des réglages précis (moyen de paiement, langues, widgets…) |
+| **Synchronisation** | 1. autoriser la synchronisation (site en ligne), 2. récupérer les commandes et contenus (copie de travail), 3. reprendre des réglages précis (moyen de paiement, langues, widgets…), 4. comparer deux sites |
 | **Rechercher / Remplacer** | changer une adresse ou un texte dans toute la base de données |
 | **Réglages** | nettoyage automatique des anciennes sauvegardes, version installée |
 | **Aide** | les trois scénarios pas à pas |
@@ -238,6 +242,14 @@ Un réglage a disparu après une migration, ou diffère de celui du site d'origi
 Les valeurs sont copiées telles qu'elles sont stockées (jamais désérialisées), et **les adresses du site d'origine sont remplacées par celles de ce site** (variantes encodées et formes sérialisées comprises ; option décochable). Ne sont jamais copiés : l'adresse du site (`siteurl`, `home`), le thème, les extensions actives, les numéros de version, les tâches planifiées, les données de session et les réglages de WP Migration. Les réglages qui désignent des pages, menus ou termes par leur numéro sont signalés : vérifiez qu'ils existent sur le site à corriger. Un réglage de plus de 1 Mo n'est pas repris.
 
 En SSH : `wp migration settings '<lien>' --filter=monetico` liste, `--names=…` ou `--filter=… --all` choisit, `--dry-run` compare seulement, `wp migration settings-undo` annule.
+
+### Comparer deux sites
+
+Après une migration, ou avant une mise en ligne : qu'est-ce qui diffère entre ce site et l'autre ? **Synchronisation → Comparer ce site avec un autre**, coller le lien de synchronisation de l'autre site (WP Migration 1.10.0 ou plus récent), **Comparer**. La comparaison est **en lecture seule** sur les deux sites et ne transmet ni mot de passe ni clé.
+
+Elle couvre : versions de WordPress, de PHP et de la base de données ; thème actif ; **extensions** (version, active ou non, extensions obligatoires) ; réglages usuels (permaliens, page d'accueil, fuseau horaire, devise et taxes WooCommerce…) ; **moyens de paiement activés** ; extension de langues, langue par défaut et langues actives ; menus ; nombre de contenus. Chaque ligne est *Identique*, *Différent*, *Seulement ici*, *Seulement là-bas* ou *À titre indicatif* (adresse, préfixe des tables et nombre de contenus diffèrent normalement entre un site et sa copie). Le bouton **Reprendre** d'un réglage ouvre l'outil « Reprendre des réglages d'un autre site » sur ce réglage.
+
+En SSH : `wp migration compare '<lien>'` (`--all` pour les lignes identiques, `--format=json`).
 
 ### Rechercher et remplacer dans la base de données
 
