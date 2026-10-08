@@ -207,6 +207,30 @@ class WPMIG_Config_Editor {
 	}
 
 	/**
+	 * Names of the constants defined with define().
+	 *
+	 * @return array
+	 */
+	public function define_names() {
+		$names = array();
+		$code  = $this->code;
+		if ( function_exists( 'token_get_all' ) ) {
+			$code = '';
+			foreach ( @token_get_all( $this->code ) as $t ) {
+				if ( ! is_array( $t ) ) {
+					$code .= $t;
+				} elseif ( T_COMMENT !== $t[0] && T_DOC_COMMENT !== $t[0] ) {
+					$code .= $t[1];
+				}
+			}
+		}
+		if ( preg_match_all( '/\bdefine\s*\(\s*([\'"])([A-Za-z0-9_]+)\1/', $code, $m ) ) {
+			$names = array_values( array_unique( $m[2] ) );
+		}
+		return $names;
+	}
+
+	/**
 	 * Raw value code of a constant.
 	 *
 	 * @param string $name Constant.
@@ -896,7 +920,7 @@ class WPMIG_Installer {
 			}
 		}
 		if ( is_file( $this->root . '/wp-config.php' ) || is_file( $this->root . '/wp-settings.php' ) ) {
-			$add( 'WordPress existant', 'Un WordPress est déjà présent dans ce dossier : ses fichiers seront écrasés (wp-config.php et .htaccess sont sauvegardés).', 'warning' );
+			$add( 'WordPress existant', 'Un WordPress est déjà présent dans ce dossier : ses fichiers seront écrasés (wp-config.php et .htaccess sont sauvegardés ; le wp-config.php actuel peut être conservé).', 'warning' );
 		}
 		$mem = ini_get( 'memory_limit' );
 		$add( 'memory_limit', '-1' === $mem ? 'illimité' : $mem, ( '-1' !== $mem && $this->to_bytes( $mem ) < 67108864 ) ? 'warning' : 'ok' );
@@ -1178,6 +1202,7 @@ class WPMIG_Installer {
 		}
 		$p['skip_files']  = $bool( 'skip_files' ) || ! empty( $manifest['db_only'] );
 		$p['new_salts']   = $bool( 'new_salts' );
+		$p['keep_config'] = $bool( 'keep_config' );
 		$p['keep_guid']   = $bool( 'keep_guid' );
 		$p['www_variants'] = $bool( 'www_variants' );
 		$p['skip_verify']  = $bool( 'skip_verify' );
@@ -1836,17 +1861,35 @@ class WPMIG_Installer {
 		$m        = $this->manifest();
 		$p        = $this->state['params'];
 		$source   = ! empty( $m['wp_config'] ) ? base64_decode( $m['wp_config'] ) : '';
+		$origin   = new WPMIG_Config_Editor( (string) $source );
+		$target   = $this->root . '/wp-config.php';
 		$generated = false;
-		if ( '' === trim( (string) $source ) ) {
-			$source    = WPMIG_Config_Editor::skeleton();
-			$generated = true;
-			$this->warn( 'wp-config.php d\'origine indisponible : un fichier neuf a été généré.' );
-		}
-		$config = new WPMIG_Config_Editor( $source );
 
-		// Old paths and URLs (WP_TEMP_DIR, WPCACHEHOME, custom constants...).
-		$replacer = new WPMIG_Replacer( $this->replacement_pairs() );
-		$config->transform( array( $replacer, 'replace_plain' ) );
+		// The wp-config.php of this server can be kept: only the database, the prefix and the addresses change.
+		$keep = false;
+		if ( ! empty( $p['keep_config'] ) && is_file( $target ) ) {
+			$current = new WPMIG_Config_Editor( (string) @file_get_contents( $target ) );
+			if ( true !== $current->lint() ) {
+				$this->warn( 'wp-config.php existant invalide (' . $current->lint() . ') : celui du site d\'origine est utilisé.' );
+			} elseif ( null === $current->get_define_code( 'DB_NAME' ) || null === $current->get_prefix() ) {
+				$this->warn( 'wp-config.php existant incomplet (base de données ou préfixe introuvable) : celui du site d\'origine est utilisé.' );
+			} else {
+				$keep   = true;
+				$config = $current;
+			}
+		}
+		if ( ! $keep ) {
+			if ( '' === trim( (string) $source ) ) {
+				$source    = WPMIG_Config_Editor::skeleton();
+				$generated = true;
+				$this->warn( 'wp-config.php d\'origine indisponible : un fichier neuf a été généré.' );
+			}
+			$config = new WPMIG_Config_Editor( $source );
+
+			// Old paths and URLs (WP_TEMP_DIR, WPCACHEHOME, custom constants...).
+			$replacer = new WPMIG_Replacer( $this->replacement_pairs() );
+			$config->transform( array( $replacer, 'replace_plain' ) );
+		}
 
 		$db       = $this->connect( $p );
 		$importer = new WPMIG_DB_Importer( $db, array() );
@@ -1873,10 +1916,13 @@ class WPMIG_Installer {
 				$config->set_define( $const, var_export( $url, true ) );
 			}
 		}
-		// Constants that would point to the old server.
-		$remove = array( 'COOKIE_DOMAIN', 'DOMAIN_CURRENT_SITE' );
-		if ( ! empty( $m['site']['content_relocated'] ) ) {
-			$remove = array_merge( $remove, array( 'WP_CONTENT_DIR', 'WP_CONTENT_URL', 'WP_PLUGIN_DIR', 'WP_PLUGIN_URL', 'PLUGINDIR', 'WPMU_PLUGIN_DIR', 'WPMU_PLUGIN_URL' ) );
+		// Constants that would point to the old server (the kept file already belongs to this one).
+		$remove = array();
+		if ( ! $keep ) {
+			$remove = array( 'COOKIE_DOMAIN', 'DOMAIN_CURRENT_SITE' );
+			if ( ! empty( $m['site']['content_relocated'] ) ) {
+				$remove = array_merge( $remove, array( 'WP_CONTENT_DIR', 'WP_CONTENT_URL', 'WP_PLUGIN_DIR', 'WP_PLUGIN_URL', 'PLUGINDIR', 'WPMU_PLUGIN_DIR', 'WPMU_PLUGIN_URL' ) );
+			}
 		}
 		foreach ( $remove as $const ) {
 			if ( $config->remove_define( $const ) ) {
@@ -1897,11 +1943,27 @@ class WPMIG_Installer {
 			$config->regenerate_salts();
 		}
 		// Absolute includes that do not exist on this server.
-		if ( preg_match_all( '/(?:require|include)(?:_once)?\s*\(?\s*[\'"](\/[^\'"]+)[\'"]/', $config->code(), $inc ) ) {
+		if ( ! $keep && preg_match_all( '/(?:require|include)(?:_once)?\s*\(?\s*[\'"](\/[^\'"]+)[\'"]/', $config->code(), $inc ) ) {
 			foreach ( $inc[1] as $path ) {
 				if ( ! file_exists( $path ) ) {
 					$this->warn( 'wp-config.php inclut un fichier absent sur ce serveur : ' . $path . ' — à corriger manuellement si le site ne s\'affiche pas.' );
 				}
+			}
+		}
+		if ( $keep ) {
+			// Constants of the original site the kept file does not define (debug, cache, memory...).
+			$skip    = array( 'DB_NAME', 'DB_USER', 'DB_PASSWORD', 'DB_HOST', 'DB_CHARSET', 'DB_COLLATE', 'ABSPATH', 'WP_HOME', 'WP_SITEURL', 'COOKIE_DOMAIN', 'DOMAIN_CURRENT_SITE', 'AUTH_KEY', 'SECURE_AUTH_KEY', 'LOGGED_IN_KEY', 'NONCE_KEY', 'AUTH_SALT', 'SECURE_AUTH_SALT', 'LOGGED_IN_SALT', 'NONCE_SALT' );
+			$missing = array_values( array_diff( $origin->define_names(), $config->define_names(), $skip ) );
+			$this->state['notices'][] = 'wp-config.php existant conservé : seuls la base de données, le préfixe des tables et les adresses y ont été mis à jour.';
+			if ( $missing ) {
+				// Kept aside (same protection as the backup of the replaced file) to copy what the site needs.
+				$aside = $this->root . '/wp-config-origine-' . gmdate( 'Ymd-His' ) . '.php';
+				$where = '';
+				if ( false !== @file_put_contents( $aside, "<?php exit; // wp-config.php du site d'origine, conservé par WP Migration. ?>\n" . (string) $source ) ) {
+					@chmod( $aside, 0600 );
+					$where = ' (fichier d\'origine : ' . basename( $aside ) . ')';
+				}
+				$this->state['notices'][] = 'Constantes du wp-config.php d\'origine absentes du fichier conservé : ' . implode( ', ', array_slice( $missing, 0, 25 ) ) . ( count( $missing ) > 25 ? '…' : '' ) . ' — ajoutez-les si le site en dépend' . $where . '.';
 			}
 		}
 		$lint = $config->lint();
@@ -1916,7 +1978,6 @@ class WPMIG_Installer {
 			$config->set_prefix( $p['db_prefix'] );
 		}
 
-		$target = $this->root . '/wp-config.php';
 		if ( is_file( $target ) ) {
 			// A .php file that stops at once: never served as text (it holds database credentials).
 			$backup = $this->root . '/wp-config-sauvegarde-' . gmdate( 'Ymd-His' ) . '.php';
@@ -2164,6 +2225,7 @@ class WPMIG_Installer {
 				'skip_verify'  => ! empty( $p['skip_verify'] ),
 				'keep_guid'    => ! empty( $p['keep_guid'] ),
 				'new_salts'    => ! empty( $p['new_salts'] ),
+				'keep_config'  => ! empty( $p['keep_config'] ),
 				'www_variants' => ! empty( $p['www_variants'] ),
 			),
 			'transfer'     => isset( $this->state['transfer'] ) ? $this->state['transfer'] : null,
@@ -2777,6 +2839,7 @@ class WPMIG_Installer {
 							'checks'   => $checks,
 							'blocking' => $this->has_blocking( $checks ),
 							'defaults' => $defaults,
+							'has_config' => is_file( $this->root . '/wp-config.php' ),
 							'state'    => $this->public_state(),
 						)
 					);
@@ -2953,7 +3016,7 @@ class WPMIG_Installer {
 	private function cli_main() {
 		$opts = getopt(
 			'h',
-			array( 'help', 'db-host:', 'db-name:', 'db-user:', 'db-pass:', 'db-prefix:', 'db-action:', 'db-create', 'url:', 'home-url:', 'skip-files', 'new-salts', 'keep-guid', 'no-www-variant', 'skip-verify', 'admin-user:', 'admin-pass:', 'admin-email:', 'replace:', 'source-url:', 'cleanup', 'check' )
+			array( 'help', 'db-host:', 'db-name:', 'db-user:', 'db-pass:', 'db-prefix:', 'db-action:', 'db-create', 'url:', 'home-url:', 'skip-files', 'new-salts', 'use-source-config', 'keep-guid', 'no-www-variant', 'skip-verify', 'admin-user:', 'admin-pass:', 'admin-email:', 'replace:', 'source-url:', 'cleanup', 'check' )
 		);
 		$out = function ( $msg ) {
 			fwrite( STDOUT, $msg . "\n" );
@@ -2970,6 +3033,7 @@ class WPMIG_Installer {
 			$out( '  --home-url=URL           URL publique (home) si différente de --url' );
 			$out( '  --skip-files             Importe uniquement la base de données' );
 			$out( '  --new-salts              Régénère les clés de sécurité de wp-config.php' );
+			$out( '  --use-source-config      Remplace le wp-config.php existant par celui du site d\'origine (par défaut, un wp-config.php existant est conservé)' );
 			$out( '  --keep-guid              Ne modifie pas la colonne guid des articles' );
 			$out( '  --no-www-variant         Ne remplace pas la variante avec / sans « www. » de l\'ancienne adresse' );
 			$out( '  --skip-verify            Ne vérifie pas toute l\'archive avant de l\'installer' );
@@ -3031,6 +3095,7 @@ class WPMIG_Installer {
 						}
 					}
 					$in['www_variants'] = isset( $opts['no-www-variant'] ) ? '' : '1';
+					$in['keep_config']  = isset( $opts['use-source-config'] ) ? '' : '1';
 					foreach ( array( 'db-create' => 'db_create', 'skip-files' => 'skip_files', 'new-salts' => 'new_salts', 'keep-guid' => 'keep_guid', 'skip-verify' => 'skip_verify' ) as $opt => $key ) {
 						if ( isset( $opts[ $opt ] ) ) {
 							$in[ $key ] = '1';
@@ -3362,6 +3427,7 @@ table.checks td{padding:3px 0}
 			field('url_site', 'Adresse de WordPress (siteurl)', d.url_site, 'url', 'Détectée automatiquement d\'après l\'adresse de l\'installeur.', 'required') +
 			field('url_home', 'Adresse du site (home)', d.url_home, 'url', 'Identique à la précédente dans la plupart des cas.', 'required') +
 			'</div>' +
+			(info.has_config ? '<h3>wp-config.php existant</h3><label class="inline"><input type="checkbox" name="keep_config" value="1" checked> Conserver le wp-config.php actuel de ce serveur : seuls la base de données, le préfixe des tables et les adresses y sont mis à jour (vos autres réglages restent). Décochez pour le remplacer par celui du site d\'origine ; l\'ancien est de toute façon sauvegardé.</label>' : '') +
 			'<details><summary>Options avancées</summary>' +
 			(p.db_only ? '' : '<label class="inline"><input type="checkbox" name="skip_files" value="1"> Ne pas extraire les fichiers (importer uniquement la base de données)</label>') +
 			'<label class="inline"><input type="checkbox" name="new_salts" value="1"> Régénérer les clés de sécurité (déconnecte tous les utilisateurs)</label>' +

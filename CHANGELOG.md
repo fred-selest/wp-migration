@@ -3,6 +3,17 @@
 Toutes les évolutions notables de WP Migration sont consignées ici.
 Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le projet respecte le [versionnage sémantique](https://semver.org/lang/fr/).
 
+## [1.16.0] - 2026-10-08
+
+### Modifié
+- **Installation sur un WordPress existant** : le `wp-config.php` déjà présent sur le serveur de destination est désormais **conservé** (case cochée par défaut dans l'installeur, `--use-source-config` en ligne de commande pour l'inverser). Seuls la base de données saisie, le préfixe des tables, `WP_HOME` / `WP_SITEURL` s'ils sont définis et, si le nouveau site est en http, `FORCE_SSL_ADMIN` / `FORCE_SSL_LOGIN` y sont mis à jour ; les réglages propres à l'hébergeur (mémoire, cache, constantes de plateforme) et ses clés de sécurité restent. Avant, il était remplacé par celui du site d'origine.
+- Les constantes du `wp-config.php` d'origine absentes du fichier conservé sont listées dans les avis de l'installeur, et le fichier d'origine est mis de côté (`wp-config-origine-*.php`, protégé comme la sauvegarde de l'ancien fichier) pour les recopier au besoin.
+- Un `wp-config.php` existant invalide ou incomplet n'est pas conservé : celui du site d'origine est utilisé, avec un avertissement. L'ancien fichier est toujours sauvegardé (`wp-config-sauvegarde-*.php`).
+- La restauration depuis l'administration en profite : le `wp-config.php` du site n'est plus remplacé.
+
+### Ajouté
+- Le test de bout en bout vérifie la conservation (réglage de l'hébergeur gardé, constante de l'origine signalée), l'option inverse et la sauvegarde protégée de l'ancien fichier.
+
 ## [1.15.0] - 2026-10-08
 
 ### Ajouté
@@ -191,6 +202,7 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le pr
 - Protection de l'installeur par mot de passe.
 - Compatibilité WordPress 4.9 à 7.1 et PHP 5.6 à 8.4.
 
+[1.16.0]: https://github.com/fred-selest/wp-migration/releases/tag/v1.16.0
 [1.15.0]: https://github.com/fred-selest/wp-migration/releases/tag/v1.15.0
 [1.14.0]: https://github.com/fred-selest/wp-migration/releases/tag/v1.14.0
 [1.13.1]: https://github.com/fred-selest/wp-migration/releases/tag/v1.13.1

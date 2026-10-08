@@ -334,6 +334,8 @@ check( 'chemin remplacé', '/var/www/new/tmp', $ed2->get_define( 'WP_TEMP_DIR' )
 check( 'nouveau préfixe', 'abc_', $ed2->get_prefix() );
 $skeleton = new WPMIG_Config_Editor( WPMIG_Config_Editor::skeleton() );
 check( 'squelette valide', true, $skeleton->lint() );
+check( 'liste des constantes', array( 'DB_NAME', 'DB_USER', 'DB_PASSWORD', 'DB_HOST', 'WP_HOME', 'COOKIE_DOMAIN', 'WP_SITEURL', 'WP_TEMP_DIR' ), ( new WPMIG_Config_Editor( $config ) )->define_names() );
+check( 'liste des constantes : guillemets doubles et doublons', array( 'A_B', 'C' ), ( new WPMIG_Config_Editor( "<?php define(\"A_B\", 1); define( 'C', 2 ); define('A_B', 3); // define('COMMENTE'" ) )->define_names() );
 
 echo "\nRapport de migration\n";
 if ( ! defined( 'ABSPATH' ) ) {
