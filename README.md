@@ -32,6 +32,10 @@ En un clic (sauvegarde complète ou base de données seule), ou avec l'assistant
 | **3. Sauvegarde prête** (archive, installeur et mot de passe) | **Liste des sauvegardes** |
 | ![Sauvegarde prête](docs/screenshots/3-creation-sauvegarde-prete.png) | ![Liste des sauvegardes](docs/screenshots/4-liste-des-sauvegardes.png) |
 
+### Restaurer une sauvegarde de ce site
+
+![Restauration préparée](docs/screenshots/30-restauration-preparee.png)
+
 ### Transfert direct de serveur à serveur
 
 | Lien secret sur le site d'origine | Import depuis un WordPress déjà installé |
@@ -128,7 +132,7 @@ Le menu **WP Migration** s'ouvre sur une **page d'accueil** qui pose la question
 | Onglet | Pour… |
 |---|---|
 | **Accueil** | choisir ce que l'on veut faire, voir l'état et le rapport de la dernière migration |
-| **Sauvegardes** | créer une sauvegarde en un clic, la personnaliser, télécharger, lancer un transfert direct, supprimer |
+| **Sauvegardes** | créer une sauvegarde en un clic, la personnaliser, télécharger, **restaurer**, lancer un transfert direct, supprimer |
 | **Recevoir un site** | remplacer ce site par une sauvegarde (FTP ou installeur) ou par un autre site, sans FTP, avec un lien de transfert |
 | **Synchronisation** | 1. autoriser la synchronisation (site en ligne), 2. récupérer les commandes et contenus (copie de travail), 3. reprendre des réglages précis (moyen de paiement, langues, widgets…), 4. comparer deux sites |
 | **Rechercher / Remplacer** | changer une adresse ou un texte dans toute la base de données |
@@ -165,6 +169,16 @@ En SSH :
 php installer.php --url=https://nouveau-domaine.fr --db-name=base --db-user=utilisateur --db-pass=secret --cleanup
 php installer.php --help
 ```
+
+### Restaurer une sauvegarde de ce site
+
+Pour revenir à un état antérieur (après une mise à jour qui tourne mal, une fausse manœuvre, un remplacement massif) : **Sauvegardes → Restaurer** sur la ligne de la sauvegarde.
+
+1. **Conseil** : créez d'abord une sauvegarde de l'état actuel (rien ne sera conservé de ce qui a été fait depuis la sauvegarde choisie).
+2. **Restaurer** prépare la restauration : l'installeur de la sauvegarde est placé à la racine du site, avec son archive (liée au fichier d'origine plutôt que dupliquée quand le serveur le permet, sinon copiée si l'espace disque suffit). **Rien n'est modifié à ce stade** ; **Annuler la préparation** retire ces fichiers.
+3. **Ouvrir l'installeur**, saisir le mot de passe de la sauvegarde (celui choisi à sa création), puis suivre les étapes habituelles : les accès à la base de données et l'adresse de ce site sont déjà remplis. Tous les fichiers, la base de données et les comptes du site sont remplacés par ceux de la sauvegarde. À la fin, « Supprimer les fichiers d'installation » retire l'installeur et l'archive de la racine ; la sauvegarde reste dans la liste.
+
+Il faut pouvoir installer des extensions (`install_plugins`) et que les modifications de fichiers soient autorisées (`DISALLOW_FILE_MODS`). En SSH : `wp migration restore <id>` prépare et affiche l'adresse de l'installeur, `wp migration restore <id> --cancel` annule ; l'installeur se lance aussi en ligne de commande (`php <installeur> --help`).
 
 ### Transfert direct (sans FTP)
 

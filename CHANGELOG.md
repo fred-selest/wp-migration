@@ -3,6 +3,12 @@
 Toutes les évolutions notables de WP Migration sont consignées ici.
 Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le projet respecte le [versionnage sémantique](https://semver.org/lang/fr/).
 
+## [1.11.0] - 2026-10-08
+
+### Ajouté
+- **Restaurer une sauvegarde de ce site** depuis **Sauvegardes → Restaurer** : l'installeur de la sauvegarde et son archive sont placés à la racine du site (archive liée plutôt que dupliquée quand le serveur le permet, sinon copiée après contrôle de l'espace disque), puis l'installeur, qui reprend les accès à la base de données et l'adresse de ce site, remplace les fichiers, la base de données et les comptes. Rien n'est modifié tant que l'installeur n'est pas lancé ; « Annuler la préparation » retire les fichiers. La préparation reste visible dans la liste après rechargement de la page, et la sauvegarde n'est jamais supprimée par le nettoyage de l'installeur.
+- `wp migration restore <id>` et `wp migration restore <id> --cancel`.
+
 ## [1.10.0] - 2026-10-08
 
 ### Ajouté
@@ -135,6 +141,7 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le pr
 - Protection de l'installeur par mot de passe.
 - Compatibilité WordPress 4.9 à 7.1 et PHP 5.6 à 8.4.
 
+[1.11.0]: https://github.com/fred-selest/wp-migration/releases/tag/v1.11.0
 [1.10.0]: https://github.com/fred-selest/wp-migration/releases/tag/v1.10.0
 [1.9.0]: https://github.com/fred-selest/wp-migration/releases/tag/v1.9.0
 [1.8.0]: https://github.com/fred-selest/wp-migration/releases/tag/v1.8.0

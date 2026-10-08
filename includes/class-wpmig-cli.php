@@ -771,6 +771,39 @@ class WPMIG_CLI {
 	}
 
 	/**
+	 * Prepare the restoration of a backup of this site: places its installer and
+	 * archive in the WordPress root and prints the address of the installer.
+	 *
+	 * Nothing is changed until the installer is run (browser, or in SSH:
+	 * php <installer> --url=... --db-name=... --db-user=... --db-pass=...).
+	 *
+	 * ## OPTIONS
+	 *
+	 * <id>
+	 * : Backup identifier (see wp migration list).
+	 *
+	 * [--cancel]
+	 * : Remove the installer and archive placed in the root.
+	 *
+	 * @param array $args       Arguments.
+	 * @param array $assoc_args Options.
+	 */
+	public function restore( $args, $assoc_args ) {
+		try {
+			if ( isset( $assoc_args['cancel'] ) ) {
+				WPMIG_Restore::cancel( $args[0] );
+				WP_CLI::success( 'Préparation annulée : l\'installeur et l\'archive ont été retirés de la racine du site.' );
+				return;
+			}
+			$res = WPMIG_Restore::prepare( $args[0] );
+			WP_CLI::log( 'Installeur : ' . $res['url'] );
+			WP_CLI::success( 'Restauration préparée (' . ( 'link' === $res['mode'] ? 'archive liée, non dupliquée' : 'archive copiée' ) . '). Ouvrez l\'installeur et saisissez le mot de passe de la sauvegarde ; annulation : wp migration restore ' . $args[0] . ' --cancel' );
+		} catch ( WPMIG_Exception $e ) {
+			WP_CLI::error( $e->getMessage() );
+		}
+	}
+
+	/**
 	 * Print the result of a search and replace.
 	 *
 	 * @param array $state Public state.

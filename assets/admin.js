@@ -477,6 +477,18 @@
 	if ( list ) {
 		list.addEventListener( 'click', function ( e ) {
 			var target = e.target;
+			if ( target.getAttribute( 'data-restore-cancel' ) ) {
+				var holder = target.closest( 'tr' );
+				var owner = holder.hasAttribute( 'data-id' ) ? holder : holder.previousElementSibling;
+				target.disabled = true;
+				post( 'wpmig_restore_cancel', { id: owner.getAttribute( 'data-id' ) } ).then( function () {
+					window.location.reload();
+				} ).catch( function ( err ) {
+					target.disabled = false;
+					window.alert( err.message );
+				} );
+				return;
+			}
 			var row = target.closest( 'tr[data-id]' );
 			if ( ! row ) {
 				return;
@@ -506,6 +518,23 @@
 				tr.innerHTML = '<td colspan="5"></td>';
 				row.parentNode.insertBefore( tr, row.nextSibling );
 				transferPanel( id, tr.firstChild );
+				return;
+			}
+			if ( target.getAttribute( 'data-restore' ) ) {
+				if ( ! window.confirm( 'Restaurer cette sauvegarde ?\n\nTous les fichiers, la base de données et les comptes de ce site seront REMPLACÉS par ceux de la sauvegarde. Conseil : créez d\'abord une sauvegarde de l\'état actuel.\n\nL\'installeur de la sauvegarde va être préparé ; rien n\'est modifié tant que vous ne le lancez pas.' ) ) {
+					return;
+				}
+				target.disabled = true;
+				post( 'wpmig_restore_prepare', { id: id } ).then( function ( res ) {
+					var tr = document.createElement( 'tr' );
+					tr.className = 'wpmig-transfer-row';
+					tr.innerHTML = '<td colspan="5"><div class="notice notice-warning inline"><p><strong>Restauration préparée.</strong> Ouvrez l\'installeur, saisissez le mot de passe de la sauvegarde (celui choisi à sa création) : les accès à la base de données de ce site sont repris. ' + ( res.mode === 'link' ? 'L\'archive n\'a pas été dupliquée.' : 'L\'archive a été copiée à côté de l\'installeur.' ) + '</p><p><a class="button button-primary" href="' + esc( res.url ) + '">Ouvrir l\'installeur</a> <button type="button" class="button" data-restore-cancel="1">Annuler la préparation</button></p></div></td>';
+					row.parentNode.insertBefore( tr, row.nextSibling );
+					target.disabled = false;
+				} ).catch( function ( err ) {
+					target.disabled = false;
+					window.alert( err.message );
+				} );
 				return;
 			}
 			if ( target.getAttribute( 'data-delete' ) ) {
