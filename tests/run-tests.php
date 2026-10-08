@@ -428,6 +428,7 @@ if ( ! function_exists( 'esc_sql' ) ) {
 require dirname( __DIR__ ) . '/includes/class-wpmig-sync-source.php';
 require dirname( __DIR__ ) . '/includes/class-wpmig-sync-db.php';
 require dirname( __DIR__ ) . '/includes/class-wpmig-sync.php';
+require dirname( __DIR__ ) . '/includes/class-wpmig-settings.php';
 check( 'empreinte d\'un contenu', 'shop_order|2026-09-29 05:25:04', WPMIG_Sync_Source::fingerprint( 'orders', array( 'post_type' => 'shop_order', 'post_date_gmt' => '2026-09-29 05:25:04' ) ) );
 check( 'empreinte d\'un client', 'client-1', WPMIG_Sync_Source::fingerprint( 'customers', array( 'user_login' => 'client-1' ) ) );
 check( 'empreinte d\'un commentaire', '2026-09-29 05:25:07|marie@example.org', WPMIG_Sync_Source::fingerprint( 'comments', array( 'post_date_gmt' => '2026-09-29 05:25:07', 'comment_author_email' => 'Marie@Example.org' ) ) );
@@ -451,6 +452,39 @@ foreach ( array(
 	}
 }
 check( 'ordre d\'application : dépendances d\'abord', array( 'media', 'customers', 'products', 'coupons', 'posts', 'orders', 'comments' ), WPMIG_Sync::KINDS );
+
+echo "\nRéglages repris d'un autre site\n";
+if ( ! function_exists( 'size_format' ) ) {
+	function size_format( $bytes ) {
+		return $bytes . ' o';
+	}
+}
+foreach ( array( 'siteurl', 'home', 'active_plugins', 'template', 'wpmig_report', 'wpmig_sync_link', '_transient_x', '_site_transient_timeout_y', 'wp_user_roles', 'wp_1514363_user_roles', 'woocommerce_db_version', 'db_version', 'woocommerce_version', "bad\nname" ) as $name ) {
+	check( 'réglage protégé : ' . trim( $name ), true, '' !== WPMIG_Settings::protected_reason( $name ) );
+}
+foreach ( array( 'woocommerce_monetico_settings', 'polylang', 'icl_sitepress_settings', 'theme_mods_astra', 'widget_text', 'blogname', 'permalink_structure', 'woocommerce_currency' ) as $name ) {
+	check( 'réglage copiable : ' . $name, '', WPMIG_Settings::protected_reason( $name ) );
+}
+check( 'autoload yes', 'yes', WPMIG_Settings::autoload( 'auto' ) );
+check( 'autoload on', 'yes', WPMIG_Settings::autoload( 'on' ) );
+check( 'autoload off', 'no', WPMIG_Settings::autoload( 'off' ) );
+check( 'autoload auto-off', 'no', WPMIG_Settings::autoload( 'auto-off' ) );
+check( 'nom de réglage ordinaire', false, WPMIG_Settings::secret_name( 'woocommerce_monetico_settings' ) );
+check( 'clé secrète détectée', true, WPMIG_Settings::secret_name( 'api_key' ) );
+check( 'clé banale', false, WPMIG_Settings::secret_name( 'title' ) );
+check( 'renvoi par numéro signalé', true, '' !== WPMIG_Settings::references_note( 'woocommerce_shop_page_id' ) );
+check( 'réglage sans renvoi', '', WPMIG_Settings::references_note( 'woocommerce_currency' ) );
+$old = serialize( array( 'enabled' => 'no', 'title' => 'CB', 'api_key' => 'ancien', 'nested' => array( 'a' => 1, 'b' => 2 ) ) );
+$new = serialize( array( 'enabled' => 'yes', 'title' => 'CB', 'api_key' => 'nouveau', 'nested' => array( 'a' => 1, 'b' => 3, 'c' => true ) ) );
+$diff = WPMIG_Settings::changes( 'woocommerce_monetico_settings', $old, $new );
+check( 'différences : nombre', 4, count( $diff ) );
+check( 'différences : valeur lisible', 'enabled : « no » → « yes »', $diff[0] );
+check( 'différences : secret masqué', 'api_key : •••••• → ••••••', implode( '|', preg_grep( '/^api_key/', $diff ) ) );
+check( 'différences : clé ajoutée', 'nested.c : (absent) → true', implode( '|', preg_grep( '/^nested\.c/', $diff ) ) );
+check( 'différence de texte simple', array( '« a » → « b »' ), WPMIG_Settings::changes( 'blogname', 'a', 'b' ) );
+check( 'texte secret masqué', array( '•••••• → ••••••' ), WPMIG_Settings::changes( 'my_token', 'a', 'b' ) );
+check( 'objet sérialisé non lu', array( '« O:8:"stdClass":0:{} » → « b »' ), WPMIG_Settings::changes( 'x', 'O:8:"stdClass":0:{}', 'b' ) );
+check( 'valeurs longues résumées', array( '300 o → 400 o' ), WPMIG_Settings::changes( 'x', str_repeat( 'a', 300 ), str_repeat( 'b', 400 ) ) );
 
 echo "\n" . ( $count - $failures ) . '/' . $count . " tests réussis\n";
 exit( $failures ? 1 : 0 );

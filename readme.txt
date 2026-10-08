@@ -4,7 +4,7 @@ Tags: migration, duplicate, clone, backup, move
 Requires at least: 4.9
 Tested up to: 7.1
 Requires PHP: 5.6
-Stable tag: 1.8.0
+Stable tag: 1.9.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -35,6 +35,9 @@ Multisite non pris en charge.
 3. Envoyer l'archive et installer.php sur le nouveau serveur puis ouvrir installer.php dans le navigateur.
 
 == Changelog ==
+
+= 1.9.0 =
+* Reprendre des réglages d'un autre site : comparaison avant la copie, adresses adaptées, annulation ; commandes `wp migration settings` et `settings-undo`.
 
 = 1.8.0 =
 * Contrôles de cohérence après l'installation : menus, permaliens, WPML et Polylang (liens de traduction comparés à l'origine, langue par défaut, domaines de langue) ; bouton « Relancer les contrôles » et commande `wp migration check`.

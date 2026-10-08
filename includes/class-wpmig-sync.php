@@ -230,7 +230,7 @@ class WPMIG_Sync {
 	 * @return array
 	 * @throws WPMIG_Exception On error.
 	 */
-	private static function call( $link, array $params ) {
+	public static function call( $link, array $params ) {
 		$res = wp_remote_post(
 			$link,
 			array(

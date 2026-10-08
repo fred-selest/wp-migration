@@ -3,6 +3,14 @@
 Toutes les évolutions notables de WP Migration sont consignées ici.
 Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le projet respecte le [versionnage sémantique](https://semver.org/lang/fr/).
 
+## [1.9.0] - 2026-10-08
+
+### Ajouté
+- **Reprendre des réglages d'un autre site** (onglet Synchronisation) : avec le lien de synchronisation du site d'origine, on cherche des réglages par leur nom (moyen de paiement, TVA, Polylang, WPML, widgets, thème…), on les **compare avec ceux du site** (nouveau, différent, identique, différences détaillées, valeurs secrètes masquées), puis on les copie. Les valeurs sont copiées telles que stockées (jamais désérialisées) et les adresses du site d'origine sont remplacées par celles du site. La copie est **annulable** (un réglage modifié depuis est conservé) et peut être précédée d'une sauvegarde de la base de données.
+- Ne sont jamais copiés : adresse du site, thème, extensions actives, numéros de version, tâches planifiées, sessions et réglages de WP Migration. Les réglages qui désignent des contenus par leur numéro sont signalés ; au-delà de 1 Mo, un réglage n'est pas repris.
+- `wp migration settings` (liste, `--names`, `--filter --all`, `--dry-run`, `--no-adapt`) et `wp migration settings-undo`.
+- Côté site d'origine : nouvelle opération de lecture `options` du lien de synchronisation (lecture seule, sans les réglages protégés).
+
 ## [1.8.0] - 2026-09-30
 
 ### Ajouté
@@ -119,6 +127,7 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le pr
 - Protection de l'installeur par mot de passe.
 - Compatibilité WordPress 4.9 à 7.1 et PHP 5.6 à 8.4.
 
+[1.9.0]: https://github.com/fred-selest/wp-migration/releases/tag/v1.9.0
 [1.8.0]: https://github.com/fred-selest/wp-migration/releases/tag/v1.8.0
 [1.7.0]: https://github.com/fred-selest/wp-migration/releases/tag/v1.7.0
 [1.6.1]: https://github.com/fred-selest/wp-migration/releases/tag/v1.6.1
