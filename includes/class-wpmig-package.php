@@ -118,11 +118,13 @@ class WPMIG_Package {
 	/**
 	 * Create a new package.
 	 *
-	 * @param array $options Options.
+	 * @param array      $options Options.
+	 * @param array|null $secret  Salted hash of the installer password (salt, hash), when the
+	 *                            password itself is not known (scheduled backups).
 	 * @return WPMIG_Package
 	 * @throws WPMIG_Exception On error.
 	 */
-	public static function create( array $options ) {
+	public static function create( array $options, $secret = null ) {
 		if ( is_multisite() ) {
 			throw new WPMIG_Exception( 'Les installations multisite ne sont pas prises en charge.' );
 		}
@@ -134,6 +136,10 @@ class WPMIG_Package {
 		if ( '' !== $options['password'] ) {
 			$options['password_salt'] = self::random_hex( 16 );
 			$options['password_hash'] = hash( 'sha256', $options['password_salt'] . $options['password'] );
+			$options['password']      = '(défini)';
+		} elseif ( is_array( $secret ) && ! empty( $secret['salt'] ) && ! empty( $secret['hash'] ) ) {
+			$options['password_salt'] = (string) $secret['salt'];
+			$options['password_hash'] = (string) $secret['hash'];
 			$options['password']      = '(défini)';
 		}
 		$package = new self();

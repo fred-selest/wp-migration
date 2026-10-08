@@ -4,7 +4,7 @@ Tags: migration, duplicate, clone, backup, move
 Requires at least: 4.9
 Tested up to: 7.1
 Requires PHP: 5.6
-Stable tag: 1.11.0
+Stable tag: 1.12.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -35,6 +35,9 @@ Multisite non pris en charge.
 3. Envoyer l'archive et installer.php sur le nouveau serveur puis ouvrir installer.php dans le navigateur.
 
 == Changelog ==
+
+= 1.12.0 =
+* Sauvegardes planifiées (quotidiennes, hebdomadaires ou mensuelles) avec e-mail en cas d'échec ; commandes `wp migration schedule` et `schedule-run`.
 
 = 1.11.0 =
 * Restaurer une sauvegarde de ce site depuis la liste des sauvegardes (installeur préparé à la racine, annulable) ; commande `wp migration restore`.

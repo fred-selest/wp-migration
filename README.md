@@ -76,6 +76,10 @@ En un clic (sauvegarde complète ou base de données seule), ou avec l'assistant
 
 ![Sauvegarde de la base de données avant le remplacement](docs/screenshots/22-rechercher-remplacer-sauvegarde.png)
 
+### Sauvegardes planifiées (onglet Réglages)
+
+![Sauvegardes planifiées](docs/screenshots/31-sauvegardes-planifiees.png)
+
 ### Nettoyage automatique des anciennes sauvegardes (onglet Réglages)
 
 ![Nettoyage automatique](docs/screenshots/14-nettoyage-automatique.png)
@@ -136,7 +140,7 @@ Le menu **WP Migration** s'ouvre sur une **page d'accueil** qui pose la question
 | **Recevoir un site** | remplacer ce site par une sauvegarde (FTP ou installeur) ou par un autre site, sans FTP, avec un lien de transfert |
 | **Synchronisation** | 1. autoriser la synchronisation (site en ligne), 2. récupérer les commandes et contenus (copie de travail), 3. reprendre des réglages précis (moyen de paiement, langues, widgets…), 4. comparer deux sites |
 | **Rechercher / Remplacer** | changer une adresse ou un texte dans toute la base de données |
-| **Réglages** | nettoyage automatique des anciennes sauvegardes, version installée |
+| **Réglages** | sauvegardes planifiées, nettoyage automatique des anciennes sauvegardes, version installée |
 | **Aide** | les trois scénarios pas à pas |
 
 > Une **sauvegarde** est le couple archive `.wpmig` + `installer.php` : elle sert aussi bien à déménager le site qu'à en garder une copie pour revenir en arrière. (Dans les versions antérieures à 1.7.0, on parlait de « package » ; les commandes WP-CLI `wp migration build`, `list` et `delete` restent inchangées.)
@@ -297,6 +301,19 @@ wp migration replace-undo            # dernier remplacement (ou son identifiant)
 ```
 
 Contrairement à `wp search-replace`, l'analyse détaillée, l'annulation et le traitement des variantes d'URL sont intégrés.
+
+### Sauvegardes planifiées
+
+**Réglages → Sauvegardes planifiées** : une sauvegarde est créée automatiquement chaque jour, chaque semaine (jour au choix) ou le 1<sup>er</sup> de chaque mois, à l'heure du site que vous choisissez (préférez une heure creuse).
+
+- **Contenu** : complète, fichiers sans la médiathèque (et base de données), ou base de données seulement.
+- **Mot de passe de l'installeur** (8 caractères au moins, obligatoire) : il protège l'installeur de chaque sauvegarde. **Notez-le** : seule son empreinte salée est conservée dans la base, il ne peut pas être retrouvé. Laissé vide à l'enregistrement, il reste inchangé.
+- **E-mail** : prévenu en cas d'échec (par défaut), à chaque sauvegarde, ou jamais ; à l'adresse de l'administrateur ou à celle de votre choix. Le message ne contient ni mot de passe ni lien d'accès.
+- **Conservation** : les anciennes sauvegardes sont supprimées par le nettoyage automatique (nombre de sauvegardes et âge maximum). Les sauvegardes planifiées sont des sauvegardes comme les autres : on peut les télécharger, les transférer ou les restaurer depuis l'onglet Sauvegardes.
+- **Exécution** : par WP-Cron, en étapes courtes enchaînées (comme la création manuelle) ; elle reprend toute seule après une interruption, et une exécution restée bloquée plus de 6 heures est abandonnée et signalée. « Lancer une sauvegarde maintenant » la déroule dans le navigateur. Le prochain passage et le résultat de la dernière exécution sont affichés, et l'accueil signale un échec.
+- **WP-Cron désactivé** (`DISABLE_WP_CRON`) : appelez `wp-cron.php` ou `wp cron event run --due-now` depuis une tâche cron du serveur, ou lancez `wp migration schedule-run` à l'heure voulue.
+
+En SSH : `wp migration schedule` affiche l'état et accepte `--enable`, `--disable`, `--frequency=daily|weekly|monthly`, `--hour=3`, `--weekday=0..6`, `--type=full|nouploads|db`, `--password=…`, `--notify=failure|always|never`, `--email=…` ; `wp migration schedule-run` exécute une sauvegarde planifiée jusqu'à son terme.
 
 ### Nettoyage automatique des anciennes sauvegardes
 

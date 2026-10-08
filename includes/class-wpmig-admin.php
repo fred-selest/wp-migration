@@ -30,12 +30,13 @@ class WPMIG_Admin {
 		add_action( 'wp_ajax_wpmig_transfer_link', array( __CLASS__, 'ajax_transfer_link' ) );
 		add_action( 'wp_ajax_wpmig_transfer_revoke', array( __CLASS__, 'ajax_transfer_revoke' ) );
 		add_action( 'wp_ajax_wpmig_import_prepare', array( __CLASS__, 'ajax_import_prepare' ) );
-		foreach ( array( 'sync_probe', 'sync_start', 'sync_step', 'sync_confirm', 'sync_undo', 'sync_dismiss', 'sync_link', 'sync_revoke', 'search_start', 'search_step', 'search_confirm', 'search_undo', 'search_dismiss', 'settings_list', 'settings_preview', 'settings_apply', 'settings_undo', 'compare_run', 'restore_prepare', 'restore_cancel' ) as $action ) {
+		foreach ( array( 'sync_probe', 'sync_start', 'sync_step', 'sync_confirm', 'sync_undo', 'sync_dismiss', 'sync_link', 'sync_revoke', 'search_start', 'search_step', 'search_confirm', 'search_undo', 'search_dismiss', 'settings_list', 'settings_preview', 'settings_apply', 'settings_undo', 'compare_run', 'restore_prepare', 'restore_cancel', 'schedule_run', 'schedule_step' ) as $action ) {
 			add_action( 'wp_ajax_wpmig_' . $action, array( __CLASS__, 'ajax_' . $action ) );
 		}
 		add_action( 'admin_post_wpmig_download', array( __CLASS__, 'download' ) );
 		add_action( 'admin_post_wpmig_cleanup_install', array( __CLASS__, 'cleanup_install' ) );
 		add_action( 'admin_post_wpmig_cleanup_settings', array( __CLASS__, 'cleanup_settings' ) );
+		add_action( 'admin_post_wpmig_schedule_save', array( __CLASS__, 'schedule_save' ) );
 		add_action( 'admin_post_wpmig_report_download', array( __CLASS__, 'report_download' ) );
 		add_action( 'admin_post_wpmig_report_delete', array( __CLASS__, 'report_delete' ) );
 		add_action( 'admin_post_wpmig_report_recheck', array( __CLASS__, 'report_recheck' ) );
@@ -480,6 +481,31 @@ class WPMIG_Admin {
 	}
 
 	/**
+	 * Scheduled backups: start one now (the browser then advances it).
+	 */
+	public static function ajax_schedule_run() {
+		self::check_ajax();
+		try {
+			WPMIG_Schedule::start();
+			wp_send_json_success( WPMIG_Schedule::advance() );
+		} catch ( Exception $e ) {
+			wp_send_json_error( array( 'message' => $e->getMessage() ) );
+		}
+	}
+
+	/**
+	 * Scheduled backups: next step of the backup in progress.
+	 */
+	public static function ajax_schedule_step() {
+		self::check_ajax();
+		try {
+			wp_send_json_success( WPMIG_Schedule::advance() );
+		} catch ( Exception $e ) {
+			wp_send_json_error( array( 'message' => $e->getMessage() ) );
+		}
+	}
+
+	/**
 	 * Close the search & replace panel.
 	 */
 	public static function ajax_search_dismiss() {
@@ -797,6 +823,7 @@ class WPMIG_Admin {
 				self::render_search();
 				break;
 			case 'settings':
+				self::render_schedule();
 				self::render_cleanup();
 				self::render_about();
 				break;
@@ -830,6 +857,15 @@ class WPMIG_Admin {
 			echo '<li class="wpmig-status-ok"><span class="dashicons dashicons-yes-alt"></span> Dernière sauvegarde : <strong>' . esc_html( wpmig_date( $last['created'] ) ) . '</strong>' . ( ! empty( $last['sizes']['archive'] ) ? ' (' . esc_html( size_format( $last['sizes']['archive'], 1 ) ) . ')' : '' ) . ' — <a href="' . esc_url( self::tab_url( 'backups' ) ) . '">' . esc_html( count( $done ) ) . ' sauvegarde(s)</a></li>';
 		} else {
 			echo '<li class="wpmig-status-warn"><span class="dashicons dashicons-warning"></span> Aucune sauvegarde de ce site pour l\'instant — <a href="' . esc_url( self::tab_url( 'backups' ) ) . '">en créer une</a> avant toute modification importante.</li>';
+		}
+		$schedule = WPMIG_Schedule::settings();
+		$state    = WPMIG_Schedule::state();
+		if ( ! empty( $state['last'] ) && empty( $state['last']['ok'] ) ) {
+			echo '<li class="wpmig-status-warn"><span class="dashicons dashicons-warning"></span> La dernière sauvegarde planifiée a échoué (' . esc_html( wpmig_date( $state['last']['time'] ) ) . ') — <a href="' . esc_url( self::tab_url( 'settings' ) ) . '#wpmig-schedule">voir</a></li>';
+		} elseif ( $schedule['enabled'] && WPMIG_Schedule::next_scheduled() ) {
+			echo '<li class="wpmig-status-info"><span class="dashicons dashicons-clock"></span> Prochaine sauvegarde planifiée : <strong>' . esc_html( wpmig_date( WPMIG_Schedule::next_scheduled() ) ) . '</strong> — <a href="' . esc_url( self::tab_url( 'settings' ) ) . '#wpmig-schedule">la régler</a></li>';
+		} elseif ( ! $schedule['enabled'] ) {
+			echo '<li class="wpmig-status-info"><span class="dashicons dashicons-clock"></span> Sauvegardes automatiques désactivées — <a href="' . esc_url( self::tab_url( 'settings' ) ) . '#wpmig-schedule">les planifier</a></li>';
 		}
 		if ( $link ) {
 			echo '<li class="wpmig-status-info"><span class="dashicons dashicons-admin-links"></span> Lien de synchronisation actif jusqu\'au <strong>' . esc_html( wpmig_date( $link['expires'] ) ) . '</strong> — <a href="' . esc_url( self::tab_url( 'sync' ) ) . '">le gérer</a></li>';
@@ -1369,6 +1405,35 @@ class WPMIG_Admin {
 	}
 
 	/**
+	 * Save the settings of the scheduled backups.
+	 */
+	public static function schedule_save() {
+		if ( ! current_user_can( self::CAP ) || ! isset( $_POST['_wpnonce'] ) || ! wp_verify_nonce( sanitize_text_field( wp_unslash( $_POST['_wpnonce'] ) ), 'wpmig_schedule_save' ) ) {
+			wp_die( 'Accès refusé.', 403 );
+		}
+		$args = array( 'page' => self::SLUG, 'tab' => 'settings' );
+		try {
+			WPMIG_Schedule::save_settings(
+				array(
+					'enabled'   => ! empty( $_POST['enabled'] ),
+					'frequency' => isset( $_POST['frequency'] ) ? sanitize_key( wp_unslash( $_POST['frequency'] ) ) : 'daily',
+					'hour'      => isset( $_POST['hour'] ) ? absint( $_POST['hour'] ) : 3,
+					'weekday'   => isset( $_POST['weekday'] ) ? absint( $_POST['weekday'] ) : 1,
+					'type'      => isset( $_POST['type'] ) ? sanitize_key( wp_unslash( $_POST['type'] ) ) : 'full',
+					'notify'    => isset( $_POST['notify'] ) ? sanitize_key( wp_unslash( $_POST['notify'] ) ) : 'failure',
+					'email'     => isset( $_POST['email'] ) ? sanitize_text_field( wp_unslash( $_POST['email'] ) ) : '',
+					'password'  => isset( $_POST['password'] ) ? (string) wp_unslash( $_POST['password'] ) : '', // phpcs:ignore WordPress.Security.ValidatedSanitizedInput
+				)
+			);
+			$args['schedule_saved'] = 1;
+		} catch ( Exception $e ) {
+			$args['schedule_error'] = rawurlencode( $e->getMessage() );
+		}
+		wp_safe_redirect( add_query_arg( $args, admin_url( 'admin.php' ) ) . '#wpmig-schedule' );
+		exit;
+	}
+
+	/**
 	 * Cleanup settings.
 	 */
 	private static function render_cleanup() {
@@ -1577,6 +1642,86 @@ class WPMIG_Admin {
 			<div id="wpmig-compare-panel"></div>
 		</div>
 		<?php
+	}
+
+	/**
+	 * Scheduled backups.
+	 */
+	private static function render_schedule() {
+		$settings = WPMIG_Schedule::settings();
+		$state    = WPMIG_Schedule::state();
+		$last     = $state['last'];
+		$next     = WPMIG_Schedule::next_scheduled();
+		$days     = array( 1 => 'lundi', 2 => 'mardi', 3 => 'mercredi', 4 => 'jeudi', 5 => 'vendredi', 6 => 'samedi', 0 => 'dimanche' );
+		// phpcs:disable WordPress.Security.NonceVerification -- display only.
+		?>
+		<div class="wpmig-card" id="wpmig-schedule" data-running="<?php echo esc_attr( '' !== $state['id'] ? '1' : '' ); ?>">
+			<h2>Sauvegardes planifiées</h2>
+			<?php if ( isset( $_GET['schedule_saved'] ) ) : ?>
+				<div class="notice notice-success inline"><p>Réglages enregistrés.</p></div>
+			<?php elseif ( isset( $_GET['schedule_error'] ) ) : ?>
+				<div class="notice notice-error inline"><p><?php echo esc_html( sanitize_text_field( wp_unslash( $_GET['schedule_error'] ) ) ); ?></p></div>
+			<?php endif; ?>
+			<p>Une sauvegarde de ce site est créée automatiquement, sans y penser. Les anciennes sont supprimées par le <a href="#wpmig-cleanup">nettoyage automatique</a> (<?php echo esc_html( sprintf( '%d conservées, %d jours', WPMIG_Cleanup::settings()['keep'], WPMIG_Cleanup::settings()['days'] ) ); ?>).</p>
+			<ul class="wpmig-status">
+				<?php if ( $settings['enabled'] && $next ) : ?>
+					<li class="wpmig-status-info"><span class="dashicons dashicons-clock"></span> Prochaine sauvegarde : <strong><?php echo esc_html( wpmig_date( $next ) ); ?></strong></li>
+				<?php else : ?>
+					<li class="wpmig-status-warn"><span class="dashicons dashicons-warning"></span> Les sauvegardes planifiées sont désactivées.</li>
+				<?php endif; ?>
+				<?php if ( $last ) : ?>
+					<li class="wpmig-status-<?php echo $last['ok'] ? 'ok' : 'error'; ?>"><span class="dashicons dashicons-<?php echo $last['ok'] ? 'yes-alt' : 'dismiss'; ?>"></span> Dernière sauvegarde planifiée : <strong><?php echo esc_html( wpmig_date( $last['time'] ) ); ?></strong> — <?php echo esc_html( $last['ok'] ? 'réussie (' . $last['text'] . ')' : 'échec : ' . $last['text'] ); ?></li>
+				<?php endif; ?>
+				<?php if ( defined( 'DISABLE_WP_CRON' ) && DISABLE_WP_CRON ) : ?>
+					<li class="wpmig-status-warn"><span class="dashicons dashicons-warning"></span> WP-Cron est désactivé sur ce site (<code>DISABLE_WP_CRON</code>) : appelez <code>wp-cron.php</code> ou <code>wp cron event run --due-now</code> depuis une tâche cron du serveur.</li>
+				<?php endif; ?>
+			</ul>
+			<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" class="wpmig-schedule-form">
+				<input type="hidden" name="action" value="wpmig_schedule_save">
+				<?php wp_nonce_field( 'wpmig_schedule_save' ); ?>
+				<table class="form-table" role="presentation"><tbody>
+					<tr><th scope="row">Activer</th><td><label><input type="checkbox" name="enabled" value="1" <?php checked( $settings['enabled'] ); ?>> Créer une sauvegarde automatiquement</label></td></tr>
+					<tr><th scope="row"><label for="wpmig-sched-frequency">Fréquence</label></th><td>
+						<select name="frequency" id="wpmig-sched-frequency">
+							<option value="daily" <?php selected( $settings['frequency'], 'daily' ); ?>>Tous les jours</option>
+							<option value="weekly" <?php selected( $settings['frequency'], 'weekly' ); ?>>Toutes les semaines</option>
+							<option value="monthly" <?php selected( $settings['frequency'], 'monthly' ); ?>>Tous les mois (le 1<sup>er</sup>)</option>
+						</select>
+						<select name="weekday" id="wpmig-sched-weekday" aria-label="Jour de la semaine" <?php echo 'weekly' === $settings['frequency'] ? '' : 'hidden'; ?>>
+							<?php foreach ( $days as $n => $label ) : ?>
+								<option value="<?php echo esc_attr( $n ); ?>" <?php selected( (int) $settings['weekday'], $n ); ?>><?php echo esc_html( $label ); ?></option>
+							<?php endforeach; ?>
+						</select>
+						à
+						<select name="hour" aria-label="Heure">
+							<?php for ( $h = 0; $h < 24; $h++ ) : ?>
+								<option value="<?php echo esc_attr( $h ); ?>" <?php selected( (int) $settings['hour'], $h ); ?>><?php echo esc_html( sprintf( '%02d h', $h ) ); ?></option>
+							<?php endfor; ?>
+						</select>
+						<p class="description">Heure du site (<?php echo esc_html( function_exists( 'wp_timezone_string' ) ? wp_timezone_string() : get_option( 'timezone_string' ) ); ?>). Choisissez une heure creuse : la sauvegarde ralentit un peu le site.</p></td></tr>
+					<tr><th scope="row">Contenu</th><td>
+						<?php foreach ( WPMIG_Schedule::types() as $key => $label ) : ?>
+							<label><input type="radio" name="type" value="<?php echo esc_attr( $key ); ?>" <?php checked( $settings['type'], $key ); ?>> <?php echo esc_html( $label ); ?></label><br>
+						<?php endforeach; ?>
+					</td></tr>
+					<tr><th scope="row"><label for="wpmig-sched-password">Mot de passe de l'installeur</label></th><td>
+						<input type="password" id="wpmig-sched-password" name="password" class="regular-text" autocomplete="new-password" placeholder="<?php echo esc_attr( '' !== $settings['hash'] ? '(inchangé)' : '8 caractères au moins' ); ?>">
+						<p class="description">Il protège l'installeur de chaque sauvegarde. <strong>Notez-le</strong> : seul son empreinte est conservée, il ne peut pas être retrouvé.</p></td></tr>
+					<tr><th scope="row"><label for="wpmig-sched-notify">E-mail</label></th><td>
+						<select name="notify" id="wpmig-sched-notify">
+							<option value="failure" <?php selected( $settings['notify'], 'failure' ); ?>>Me prévenir en cas d'échec</option>
+							<option value="always" <?php selected( $settings['notify'], 'always' ); ?>>Me prévenir à chaque sauvegarde</option>
+							<option value="never" <?php selected( $settings['notify'], 'never' ); ?>>Ne pas envoyer d'e-mail</option>
+						</select>
+						<input type="email" name="email" class="regular-text" value="<?php echo esc_attr( $settings['email'] ); ?>" placeholder="<?php echo esc_attr( get_option( 'admin_email' ) ); ?>" aria-label="Adresse e-mail"></td></tr>
+				</tbody></table>
+				<p><button type="submit" class="button button-primary">Enregistrer</button>
+				<button type="button" class="button" id="wpmig-schedule-run">Lancer une sauvegarde maintenant</button></p>
+			</form>
+			<div id="wpmig-schedule-panel"></div>
+		</div>
+		<?php
+		// phpcs:enable
 	}
 
 	/**
