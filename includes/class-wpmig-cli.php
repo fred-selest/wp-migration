@@ -43,8 +43,8 @@ class WPMIG_CLI {
 	 * [--skip-revisions]
 	 * : Do not export post revisions.
 	 *
-	 * [--no-compress]
-	 * : Store files without compression.
+	 * [--compress]
+	 * : Compress the files (default; --no-compress stores them as they are).
 	 *
 	 * [--password=<password>]
 	 * : Installer password (a random one is generated and displayed when omitted).
@@ -79,7 +79,7 @@ class WPMIG_CLI {
 			'exclude_uploads'    => isset( $assoc_args['exclude-uploads'] ),
 			'exclude_host_files' => ! isset( $assoc_args['include-host-files'] ),
 			'skip_revisions'     => isset( $assoc_args['skip-revisions'] ),
-			'compress'           => ! ( isset( $assoc_args['compress'] ) && false === $assoc_args['compress'] ) && ! isset( $assoc_args['no-compress'] ),
+			'compress'           => ! self::off( $assoc_args, 'compress' ),
 			'password'           => $get( 'password' ),
 		);
 		$no_password = isset( $assoc_args['password'] ) && false === $assoc_args['password'];
@@ -135,6 +135,17 @@ class WPMIG_CLI {
 		} else {
 			WP_CLI::warning( 'Installeur sans mot de passe : ne le laissez pas en ligne sans surveillance.' );
 		}
+	}
+
+	/**
+	 * Was a --no-<name> flag given? (WP-CLI reads it as <name> = false.)
+	 *
+	 * @param array  $assoc_args Options.
+	 * @param string $name       Name without the "no-" prefix.
+	 * @return bool
+	 */
+	private static function off( array $assoc_args, $name ) {
+		return ( array_key_exists( $name, $assoc_args ) && false === $assoc_args[ $name ] ) || isset( $assoc_args[ 'no-' . $name ] );
 	}
 
 	/**
@@ -522,11 +533,11 @@ class WPMIG_CLI {
 	 * [--ignore-case]
 	 * : Case-insensitive.
 	 *
-	 * [--no-www]
-	 * : URL mode: do not process the variant with / without "www.".
+	 * [--www]
+	 * : URL mode: also process the variant with / without "www." (default; --no-www skips it).
 	 *
-	 * [--no-variants]
-	 * : Text mode: do not process the JSON-escaped and URL-encoded forms.
+	 * [--variants]
+	 * : Text mode: also process the JSON-escaped and URL-encoded forms (default; --no-variants skips them).
 	 *
 	 * [--guid]
 	 * : Also change the guid of posts.
@@ -558,8 +569,8 @@ class WPMIG_CLI {
 					'replace'     => $args[1],
 					'mode'        => $mode,
 					'ignore_case' => isset( $assoc_args['ignore-case'] ),
-					'www'         => ! isset( $assoc_args['no-www'] ),
-					'variants'    => ! isset( $assoc_args['no-variants'] ),
+					'www'         => ! self::off( $assoc_args, 'www' ),
+					'variants'    => ! self::off( $assoc_args, 'variants' ),
 					'guid'        => isset( $assoc_args['guid'] ),
 					'tables'      => isset( $assoc_args['tables'] ) ? array_map( 'trim', explode( ',', $assoc_args['tables'] ) ) : array(),
 				)
@@ -636,8 +647,8 @@ class WPMIG_CLI {
 	 * [--all]
 	 * : Copy every option matching --filter.
 	 *
-	 * [--no-adapt]
-	 * : Do not replace the addresses of the source with the ones of this site.
+	 * [--adapt]
+	 * : Replace the addresses of the source with the ones of this site (default; --no-adapt keeps them).
 	 *
 	 * [--dry-run]
 	 * : Only compare.
@@ -669,7 +680,7 @@ class WPMIG_CLI {
 				}
 				$names = wp_list_pluck( $list['options'], 'name' );
 			}
-			$plan = WPMIG_Settings::plan( $args[0], $names, ! isset( $assoc_args['no-adapt'] ) );
+			$plan = WPMIG_Settings::plan( $args[0], $names, ! self::off( $assoc_args, 'adapt' ) );
 			$todo = 0;
 			WP_CLI::log( 'Origine : ' . $plan['source'] );
 			foreach ( $plan['items'] as $item ) {
@@ -686,7 +697,7 @@ class WPMIG_CLI {
 				return;
 			}
 			WP_CLI::confirm( sprintf( 'Copier %d réglage(s) sur ce site ?', $todo ), $assoc_args );
-			$res = WPMIG_Settings::apply( $args[0], $names, ! isset( $assoc_args['no-adapt'] ) );
+			$res = WPMIG_Settings::apply( $args[0], $names, ! self::off( $assoc_args, 'adapt' ) );
 			WP_CLI::success( sprintf( '%d réglage(s) copié(s) (annulation possible : wp migration settings-undo %s). Videz les caches du site.', $res['changed'], $res['id'] ) );
 		} catch ( WPMIG_Exception $e ) {
 			WP_CLI::error( $e->getMessage() );
@@ -840,10 +851,7 @@ class WPMIG_CLI {
 	 * : Installer password (8 characters or more).
 	 *
 	 * [--s3]
-	 * : Also send every scheduled backup to the S3 storage (see wp migration s3).
-	 *
-	 * [--no-s3]
-	 * : Stop sending scheduled backups to S3.
+	 * : Also send every scheduled backup to the S3 storage (see wp migration s3); --no-s3 stops it.
 	 *
 	 * [--notify=<notify>]
 	 * : failure, always or never.
@@ -861,11 +869,11 @@ class WPMIG_CLI {
 	 */
 	public function schedule( $args, $assoc_args ) {
 		$settings = WPMIG_Schedule::settings();
-		$change   = array_intersect_key( $assoc_args, array_flip( array( 'enable', 'disable', 'frequency', 'hour', 'weekday', 'type', 'password', 'notify', 'email', 's3', 'no-s3' ) ) );
+		$change   = array_intersect_key( $assoc_args, array_flip( array( 'enable', 'disable', 'frequency', 'hour', 'weekday', 'type', 'password', 'notify', 'email', 's3' ) ) );
 		if ( $change ) {
 			$input = array_merge( $settings, array_intersect_key( $assoc_args, array_flip( array( 'frequency', 'hour', 'weekday', 'type', 'notify', 'email' ) ) ) );
 			$input['enabled'] = isset( $assoc_args['disable'] ) ? false : ( isset( $assoc_args['enable'] ) ? true : $settings['enabled'] );
-			$input['s3']      = isset( $assoc_args['no-s3'] ) ? false : ( isset( $assoc_args['s3'] ) ? true : $settings['s3'] );
+			$input['s3']      = self::off( $assoc_args, 's3' ) ? false : ( isset( $assoc_args['s3'] ) ? true : $settings['s3'] );
 			if ( isset( $assoc_args['password'] ) ) {
 				$input['password'] = $assoc_args['password'];
 			}
