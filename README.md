@@ -146,7 +146,7 @@ Le menu **WP Migration** s'ouvre sur une **page d'accueil** qui pose la question
 | **Recevoir un site** | remplacer ce site par une sauvegarde (FTP ou installeur) ou par un autre site, sans FTP, avec un lien de transfert |
 | **Synchronisation** | 1. autoriser la synchronisation (site en ligne), 2. récupérer les commandes et contenus (copie de travail), 3. reprendre des réglages précis (moyen de paiement, langues, widgets…), 4. comparer deux sites |
 | **Rechercher / Remplacer** | changer une adresse ou un texte dans toute la base de données |
-| **Réglages** | sauvegardes planifiées, stockage S3, nettoyage automatique des anciennes sauvegardes, version installée |
+| **Réglages** | sauvegardes planifiées, stockage S3 (propre ou fourni par SSM), nettoyage automatique des anciennes sauvegardes, version installée |
 | **Aide** | les trois scénarios pas à pas |
 
 > Une **sauvegarde** est le couple archive `.wpmig` + `installer.php` : elle sert aussi bien à déménager le site qu'à en garder une copie pour revenir en arrière. (Dans les versions antérieures à 1.7.0, on parlait de « package » ; les commandes WP-CLI `wp migration build`, `list` et `delete` restent inchangées.)
@@ -347,9 +347,20 @@ En SSH : `wp migration schedule` affiche l'état et accepte `--enable`, `--disab
 - **Sauvegardes planifiées** : la case « Envoyer aussi chaque sauvegarde planifiée sur le stockage S3 » (Réglages → Sauvegardes planifiées). L'exécution n'est réussie qu'une fois l'envoi terminé ; si l'envoi échoue, la sauvegarde locale existe et l'échec est signalé (e-mail et accueil).
 - **Conservation** : « Conserver les N dernières sauvegardes sur S3 ». Seuls les dossiers nommés comme une sauvegarde WP Migration sont supprimés : le reste du bucket n'est jamais touché.
 - **Récupérer une sauvegarde** : « Liens S3 » crée des liens temporaires (24 h) de l'installeur et de l'archive, sans partager vos clés. Sur le nouveau serveur : `curl -o installer.php '<lien de l'installeur>'` puis `php installer.php --source-url='<lien de l'archive>'` (ou collez le lien de l'archive dans « Lien de transfert » de l'installeur) ; l'archive est téléchargée directement depuis S3 vers le nouveau serveur.
-- **WP-CLI** : `wp migration s3` (afficher / régler : `--endpoint`, `--region`, `--bucket`, `--prefix`, `--access-key`, `--secret-key`, `--vhost`, `--keep`), `s3-test`, `s3-send <id>`, `s3-list`, `s3-link <id> [--hours=24]`, `s3-prune`, `s3-cancel`, et `wp migration schedule --s3`.
+- **WP-CLI** : `wp migration s3` (afficher / régler : `--source`, `--endpoint`, `--region`, `--bucket`, `--prefix`, `--access-key`, `--secret-key`, `--vhost`, `--keep`), `s3-test`, `s3-send <id>`, `s3-list`, `s3-link <id> [--hours=24]`, `s3-prune`, `s3-cancel`, et `wp migration schedule --s3`.
 
 L'extension signe elle-même ses requêtes (AWS Signature Version 4, sans SDK) : sa signature est identique à celle de la bibliothèque officielle d'Amazon (vérifié sur les exemples de la documentation AWS et sur des cas contrôlés avec `botocore`, accents et caractères spéciaux compris).
+
+### Stockage fourni par SSM
+
+Avec l'extension **SSM Connector** (installée sur le même WordPress et reliée à SSM, le serveur de supervision), WP Migration peut utiliser un stockage dont la **clé secrète reste dans SSM** et ne descend jamais sur le site. Pour **chaque requête** S3, WP Migration demande au connecteur une **adresse pré-signée valable pour cette seule requête**, puis envoie lui-même la requête à cette adresse ; seul l'en-tête `host` est signé, aucun `Authorization` ni `x-amz-*` n'est envoyé. Un site compromis ne peut ainsi toucher qu'à son propre dossier, et aucune clé n'est à voler.
+
+- **Choisir la source** : Réglages → Stockage S3 → « Source du stockage » (proposé seulement si le connecteur est installé et configuré). « Automatique » (par défaut) prend les réglages S3 de ce site s'ils sont complets, sinon le stockage fourni par SSM ; « Stockage fourni par SSM » et « Réglages S3 de ce site » forcent l'un ou l'autre. Sans le connecteur, rien ne change. En ligne de commande : `wp migration s3 --source=auto|ssm|own`.
+- **Ce qui change avec SSM** : l'adresse du service, la région, le bucket, le dossier et les clés ne servent plus (masqués dans l'onglet ; `WPMIG_S3_ACCESS_KEY` / `WPMIG_S3_SECRET_KEY` ne sont ni lus ni envoyés). Les fichiers sont nommés `<identifiant de la sauvegarde>/<fichier>`, SSM place ce dossier dans celui de ce site. Envoi par morceaux, reprise, sauvegardes planifiées, « Liens S3 » (jusqu'à 7 jours) et `wp migration s3-*` fonctionnent comme avec vos propres réglages ; chaque morceau reçoit une adresse fraîche.
+- **Tester la connexion** liste le dossier du site par une adresse signée (rien n'est écrit) et affiche clairement les refus : aucun point de sauvegarde configuré pour ce site, SSM injoignable, connecteur absent. Les adresses signées (qui contiennent un identifiant et une signature) ne figurent dans aucun message.
+- **Conservation** : avec SSM, « Conserver les N dernières sauvegardes » est **sans effet** et `s3-prune` ne supprime rien : SSM fait autorité sur la durée de conservation.
+- **Changer de source** : un envoi en cours ne peut pas changer de source (abandonnez-le puis relancez-le), et les « Liens S3 » d'une sauvegarde ne se créent qu'avec la source qui a servi à l'envoyer.
+- **Pour les intégrateurs** : le connecteur expose les filtres `ssm_connector_storage_available` (booléen) et `ssm_connector_storage_sign` (`method`, `key` relative, `query`, `expires` ; rend `url`, `method`, `base`, `expires_in` ou un `WP_Error`). Les clés relatives n'utilisent que `A-Z a-z 0-9 . _ - /` (400 caractères au plus, sans `..` ni `//`), ce que respectent les noms de sauvegarde de WP Migration.
 
 ### Nettoyage automatique des anciennes sauvegardes
 

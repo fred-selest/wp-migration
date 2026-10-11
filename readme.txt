@@ -4,7 +4,7 @@ Tags: migration, duplicate, clone, backup, move
 Requires at least: 4.9
 Tested up to: 7.1
 Requires PHP: 5.6
-Stable tag: 1.16.1
+Stable tag: 1.17.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -35,6 +35,9 @@ Multisite non pris en charge.
 3. Envoyer l'archive et installer.php sur le nouveau serveur puis ouvrir installer.php dans le navigateur.
 
 == Changelog ==
+
+= 1.17.0 =
+* Stockage S3 : nouvelle source « stockage fourni par SSM » (avec l'extension SSM Connector). La clé secrète reste dans SSM : pour chaque requête, SSM remet une adresse signée à usage unique. Choix de la source (automatique, SSM, réglages de ce site) ; avec SSM, la conservation des N dernières sauvegardes n'est plus gérée par WP Migration. `wp migration s3 --source=`.
 
 = 1.16.1 =
 * Installeur : « Préfixe d'origine » affiche enfin celui du site d'origine ; le nettoyage supprime aussi les copies mises de côté (wp-config.php et .htaccess remplacés, wp-config.php d'origine, .htaccess / .user.ini de l'ancien serveur).
