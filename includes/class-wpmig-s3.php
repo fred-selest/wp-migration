@@ -5,6 +5,10 @@
  * AWS Signature Version 4 and sent with the WordPress HTTP API. Large archives go up
  * in parts (multipart upload), a few parts per request, and resume after an interruption.
  *
+ * Two sources: "own" (the settings of this site, the requests are signed here) or "ssm"
+ * (storage provided by SSM: the secret key stays in SSM, which signs every single request
+ * as a presigned URL through the SSM Connector plugin; this site only sends the request).
+ *
  * @package WPMigration
  */
 
@@ -36,19 +40,26 @@ class WPMIG_S3 {
 	 */
 	const STALE = 604800;
 
+	/**
+	 * Message when the storage comes from SSM but the connector is not there.
+	 */
+	const MSG_NO_CONNECTOR = 'Le connecteur SSM n\'est pas installé ou n\'est pas configuré (adresse de SSM et jeton) : le stockage fourni par SSM est indisponible.';
+
 	/* ------------------------------------------------------------------ */
 	/* Settings                                                            */
 	/* ------------------------------------------------------------------ */
 
 	/**
-	 * Settings (the access keys can come from constants of wp-config.php).
+	 * Settings as saved (the access keys can come from constants of wp-config.php).
+	 * Whatever the source, this is what the form shows and what is saved back.
 	 *
 	 * @return array
 	 */
-	public static function settings() {
+	public static function local_settings() {
 		$saved = get_option( self::OPTION );
 		$s     = array_merge(
 			array(
+				'source'     => 'auto',
 				'endpoint'   => '',
 				'region'     => 'us-east-1',
 				'bucket'     => '',
@@ -70,13 +81,77 @@ class WPMIG_S3 {
 	}
 
 	/**
-	 * Are the settings complete?
+	 * Effective settings. With the storage provided by SSM there is no folder of our own
+	 * (the keys are relative, SSM adds its own base) and no key is ever read.
+	 *
+	 * @return array
+	 */
+	public static function settings() {
+		$s = self::local_settings();
+		if ( 'ssm' === self::resolve_source( $s['source'], $s ) ) {
+			$s['prefix']     = '';
+			$s['access_key'] = '';
+			$s['secret_key'] = '';
+		}
+		return $s;
+	}
+
+	/**
+	 * Are the local settings complete?
+	 *
+	 * @param array $s Local settings.
+	 * @return bool
+	 */
+	private static function local_complete( array $s ) {
+		return '' !== $s['endpoint'] && '' !== $s['bucket'] && '' !== $s['access_key'] && '' !== $s['secret_key'];
+	}
+
+	/**
+	 * Is the SSM Connector installed and configured?
+	 *
+	 * @return bool
+	 */
+	public static function ssm_available() {
+		return (bool) apply_filters( 'ssm_connector_storage_available', false );
+	}
+
+	/**
+	 * Source that a choice (auto, ssm, own) gives with the given local settings.
+	 *
+	 * @param string $choice auto, ssm or own.
+	 * @param array  $s      Local settings.
+	 * @return string own or ssm.
+	 */
+	public static function resolve_source( $choice, array $s ) {
+		if ( 'ssm' === $choice || 'own' === $choice ) {
+			return $choice;
+		}
+		if ( self::local_complete( $s ) ) {
+			return 'own';
+		}
+		return self::ssm_available() ? 'ssm' : 'own';
+	}
+
+	/**
+	 * Effective source: "own" (settings of this site) or "ssm" (storage provided by SSM).
+	 *
+	 * @return string
+	 */
+	public static function source() {
+		$s = self::local_settings();
+		return self::resolve_source( $s['source'], $s );
+	}
+
+	/**
+	 * Are the settings complete (for the effective source)?
 	 *
 	 * @return bool
 	 */
 	public static function configured() {
-		$s = self::settings();
-		return '' !== $s['endpoint'] && '' !== $s['bucket'] && '' !== $s['access_key'] && '' !== $s['secret_key'];
+		if ( 'ssm' === self::source() ) {
+			return self::ssm_available();
+		}
+		return self::local_complete( self::local_settings() );
 	}
 
 	/**
@@ -87,7 +162,14 @@ class WPMIG_S3 {
 	 * @throws WPMIG_Exception When invalid.
 	 */
 	public static function save_settings( array $in ) {
-		$old      = self::settings();
+		$old      = self::local_settings();
+		$source   = isset( $in['source'] ) ? (string) $in['source'] : $old['source'];
+		if ( ! in_array( $source, array( 'auto', 'ssm', 'own' ), true ) ) {
+			throw new WPMIG_Exception( 'Source du stockage invalide (auto, ssm ou own).' );
+		}
+		if ( 'ssm' === $source && $source !== $old['source'] && ! self::ssm_available() ) {
+			throw new WPMIG_Exception( 'Le connecteur SSM n\'est pas installé ou n\'est pas configuré : le stockage fourni par SSM n\'est pas disponible.' );
+		}
 		$endpoint = isset( $in['endpoint'] ) ? trim( (string) $in['endpoint'] ) : '';
 		if ( '' !== $endpoint && ! preg_match( '#^https?://[^\s/]+$#i', rtrim( $endpoint, '/' ) ) ) {
 			throw new WPMIG_Exception( 'L\'adresse du service doit être de la forme https://s3.exemple.fr (sans chemin).' );
@@ -102,6 +184,7 @@ class WPMIG_S3 {
 			throw new WPMIG_Exception( 'Dossier invalide dans le bucket.' );
 		}
 		$s = array(
+			'source'     => $source,
 			'endpoint'   => rtrim( $endpoint, '/' ),
 			'region'     => '' !== $region ? preg_replace( '/[^a-z0-9\-_]/i', '', $region ) : 'us-east-1',
 			'bucket'     => $bucket,
@@ -240,6 +323,11 @@ class WPMIG_S3 {
 	 * @return string
 	 */
 	public static function presign( $key, $expires = 86400, $stamp = '' ) {
+		if ( 'ssm' === self::source() ) {
+			// SSM signs it: the secret key is not here.
+			$signed = self::ssm_sign( 'GET', $key, array(), $expires );
+			return $signed['url'];
+		}
 		$s      = self::settings();
 		$stamp  = '' !== $stamp ? $stamp : gmdate( 'Ymd\THis\Z' );
 		$t      = self::target( $s, $key );
@@ -280,7 +368,9 @@ class WPMIG_S3 {
 	/* ------------------------------------------------------------------ */
 
 	/**
-	 * Send a signed request.
+	 * Send a request (signed here with our own keys, or signed by SSM).
+	 *
+	 * This is the only place where a request leaves: every operation goes through it.
 	 *
 	 * @param string $method  Method.
 	 * @param string $key     Object key ('' for the bucket).
@@ -288,10 +378,13 @@ class WPMIG_S3 {
 	 * @param string $body    Body.
 	 * @param array  $extra   Extra headers to send and sign (content-md5...).
 	 * @param int    $timeout Seconds.
-	 * @return array code, headers (lowercase), body.
+	 * @return array code, headers (lowercase), body, base (SSM: folder of this site, with the final slash).
 	 * @throws WPMIG_Exception On network error or S3 error.
 	 */
 	private static function request( $method, $key, array $query = array(), $body = '', array $extra = array(), $timeout = 120 ) {
+		if ( 'ssm' === self::source() ) {
+			return self::request_ssm( $method, $key, $query, $body, $extra, $timeout );
+		}
 		$s = self::settings();
 		if ( ! self::configured() ) {
 			throw new WPMIG_Exception( 'Le stockage S3 n\'est pas configuré.' );
@@ -315,7 +408,132 @@ class WPMIG_S3 {
 		unset( $headers['host'] );
 		$headers['Authorization'] = $signed['authorization'];
 		$url                      = $t['url'] . ( $query ? '?' . self::canonical_query( $query ) : '' );
-		$res                      = wp_remote_request(
+		return self::send( $method, $url, $headers, $body, $timeout, false );
+	}
+
+	/**
+	 * Send a request through the URL that SSM signed for this request only.
+	 * Only the host is signed: no Authorization nor x-amz-* header is sent.
+	 *
+	 * @param string $method  Method.
+	 * @param string $key     Relative key ('' for the bucket).
+	 * @param array  $query   Query parameters.
+	 * @param string $body    Body.
+	 * @param array  $extra   Extra headers (only content-md5 and content-type are kept).
+	 * @param int    $timeout Seconds.
+	 * @return array code, headers, body, base.
+	 * @throws WPMIG_Exception On error.
+	 */
+	private static function request_ssm( $method, $key, array $query, $body, array $extra, $timeout ) {
+		if ( ! self::ssm_available() ) {
+			throw new WPMIG_Exception( self::MSG_NO_CONNECTOR );
+		}
+		self::check_relative_key( $key );
+		$signed  = self::ssm_sign( $method, $key, $query, 3600 );
+		$headers = array();
+		foreach ( $extra as $name => $value ) {
+			$name = strtolower( $name );
+			if ( 'content-md5' === $name ) {
+				$headers['Content-MD5'] = $value;
+			} elseif ( 'content-type' === $name ) {
+				$headers['Content-Type'] = $value;
+			}
+		}
+		// WordPress would send a form content type: the object keeps this one.
+		if ( 'PUT' === $method && ! isset( $headers['Content-Type'] ) ) {
+			$headers['Content-Type'] = 'application/octet-stream';
+		}
+		$out         = self::send( $method, $signed['url'], $headers, $body, $timeout, true );
+		$out['base'] = $signed['base'];
+		return $out;
+	}
+
+	/**
+	 * Ask SSM (through the SSM Connector) for a presigned URL for one request.
+	 *
+	 * @param string $method  Method.
+	 * @param string $key     Relative key ('' for the bucket).
+	 * @param array  $query   Query parameters.
+	 * @param int    $expires Seconds.
+	 * @return array url, base (folder of this site in the bucket, '' or ending with a slash).
+	 * @throws WPMIG_Exception When SSM refuses, is unreachable or the connector is absent.
+	 */
+	private static function ssm_sign( $method, $key, array $query, $expires ) {
+		self::check_relative_key( $key );
+		// PUT, POST, DELETE, HEAD and lists: 6 hours at most; the download of an object: 7 days.
+		$max     = ( 'GET' === $method && '' !== $key ) ? 604800 : 21600;
+		$expires = max( 1, min( $max, (int) $expires ) );
+		$res     = apply_filters(
+			'ssm_connector_storage_sign',
+			null,
+			array(
+				'method'  => $method,
+				'key'     => $key,
+				'query'   => $query,
+				'expires' => $expires,
+			)
+		);
+		if ( is_wp_error( $res ) ) {
+			throw new WPMIG_Exception( self::scrub( (string) $res->get_error_message() ) );
+		}
+		if ( null === $res ) {
+			throw new WPMIG_Exception( self::MSG_NO_CONNECTOR );
+		}
+		if ( ! is_array( $res ) || empty( $res['url'] ) || ! is_string( $res['url'] ) || ! preg_match( '#^https?://[^\s/]+#i', $res['url'] ) ) {
+			throw new WPMIG_Exception( 'Réponse inattendue du connecteur SSM (adresse signée absente ou invalide).' );
+		}
+		if ( ! empty( $res['method'] ) && strtoupper( (string) $res['method'] ) !== $method ) {
+			throw new WPMIG_Exception( 'Réponse inattendue du connecteur SSM (l\'adresse signée est pour une autre méthode que ' . $method . ').' );
+		}
+		$base = isset( $res['base'] ) && is_string( $res['base'] ) ? $res['base'] : null;
+		if ( null !== $base && '' !== $base && '/' !== substr( $base, -1 ) ) {
+			$base .= '/';
+		}
+		return array(
+			'url'  => $res['url'],
+			'base' => $base,
+		);
+	}
+
+	/**
+	 * Check a key against the rules of SSM: [A-Za-z0-9._-/], no "..", no "//", no leading slash, 400 characters at most.
+	 *
+	 * @param string $key Relative key ('' for the bucket).
+	 * @throws WPMIG_Exception When the key is refused by the protocol.
+	 */
+	private static function check_relative_key( $key ) {
+		if ( '' === $key ) {
+			return;
+		}
+		if ( strlen( $key ) > 400 || ! preg_match( '#^[A-Za-z0-9._\-][A-Za-z0-9._\-/]*$#', $key ) || false !== strpos( $key, '..' ) || false !== strpos( $key, '//' ) ) {
+			throw new WPMIG_Exception( 'Nom de fichier refusé par le stockage fourni par SSM (lettres, chiffres, points, tirets et barres obliques seulement, 400 caractères au plus).' );
+		}
+	}
+
+	/**
+	 * Remove the query of every URL in a text (it holds an identifier and a signature).
+	 *
+	 * @param string $text Text.
+	 * @return string
+	 */
+	private static function scrub( $text ) {
+		return preg_replace( '#(https?://[^\s"\'<>?]*)\?[^\s"\'<>]*#i', '$1?…', (string) $text );
+	}
+
+	/**
+	 * Send the HTTP request and read the answer.
+	 *
+	 * @param string $method  Method.
+	 * @param string $url     URL.
+	 * @param array  $headers Headers.
+	 * @param string $body    Body.
+	 * @param int    $timeout Seconds.
+	 * @param bool   $ssm     The URL was signed by SSM: it never appears in a message.
+	 * @return array code, headers (lowercase), body.
+	 * @throws WPMIG_Exception On network error or S3 error.
+	 */
+	private static function send( $method, $url, array $headers, $body, $timeout, $ssm ) {
+		$res = wp_remote_request(
 			$url,
 			array(
 				'method'      => $method,
@@ -328,7 +546,12 @@ class WPMIG_S3 {
 			)
 		);
 		if ( is_wp_error( $res ) ) {
-			throw new WPMIG_Exception( 'Stockage S3 injoignable : ' . $res->get_error_message() );
+			$message = (string) $res->get_error_message();
+			if ( $ssm ) {
+				$message = str_replace( $url, preg_replace( '/\?.*$/s', '', $url ) . '?…', $message );
+				$message = self::scrub( $message );
+			}
+			throw new WPMIG_Exception( ( $ssm ? 'Stockage fourni par SSM injoignable : ' : 'Stockage S3 injoignable : ' ) . $message );
 		}
 		$code    = (int) wp_remote_retrieve_response_code( $res );
 		$headers = array();
@@ -367,12 +590,19 @@ class WPMIG_S3 {
 			404 => 'Introuvable : vérifiez le nom du bucket et l\'adresse du service.',
 			301 => 'Mauvaise région ou mauvaise adresse de service pour ce bucket.',
 		);
+		if ( 'ssm' === self::source() ) {
+			$hints = array(
+				403 => 'Accès refusé : l\'adresse signée par SSM a été refusée ou a expiré (vérifiez l\'heure de ce serveur et le point de sauvegarde de ce site dans SSM).',
+				404 => 'Introuvable : le point de sauvegarde ou le fichier n\'existe pas côté stockage.',
+				301 => 'Le stockage a répondu par une redirection : vérifiez le point de sauvegarde dans SSM.',
+			);
+		}
 		if ( '' === $text ) {
 			$text = isset( $hints[ $code ] ) ? $hints[ $code ] : 'réponse HTTP ' . $code . ( 'HEAD' === $method ? ' (sans détail)' : '' );
 		} elseif ( isset( $hints[ $code ] ) && 'SignatureDoesNotMatch' === strstr( $text, ' ', true ) ) {
 			$text .= ' (' . $hints[ $code ] . ')';
 		}
-		return 'Stockage S3 (HTTP ' . $code . ') : ' . $text;
+		return ( 'ssm' === self::source() ? 'Stockage fourni par SSM (HTTP ' : 'Stockage S3 (HTTP ' ) . $code . ') : ' . $text;
 	}
 
 	/**
@@ -382,6 +612,17 @@ class WPMIG_S3 {
 	 * @throws WPMIG_Exception On failure.
 	 */
 	public static function test() {
+		if ( 'ssm' === self::source() ) {
+			// No write here: the right to write is tested by the first upload. SSM answers for the list.
+			$res = self::request( 'GET', '', array( 'list-type' => '2', 'max-keys' => '1' ), '', array(), 30 );
+			if ( false === strpos( $res['body'], '<ListBucketResult' ) ) {
+				throw new WPMIG_Exception( 'Réponse inattendue du stockage fourni par SSM à la liste des fichiers.' );
+			}
+			return array(
+				'Stockage fourni par SSM accessible : adresse signée obtenue et liste des fichiers réussie.',
+				'Les clés restent dans SSM' . ( ! empty( $res['base'] ) ? ' ; dossier de ce site côté stockage : « ' . $res['base'] . ' »' : '' ) . '.',
+			);
+		}
 		$s   = self::settings();
 		$key = self::key( $s, 'test-' . WPMIG_Package::random_hex( 6 ) . '.txt' );
 		self::request( 'GET', '', array( 'list-type' => '2', 'max-keys' => '1' ), '', array(), 30 );
@@ -418,21 +659,41 @@ class WPMIG_S3 {
 	 */
 	public static function list_objects( $prefix = '' ) {
 		$s     = self::settings();
+		$ssm   = 'ssm' === self::source();
 		$base  = '' !== $prefix ? $prefix : ( '' !== $s['prefix'] ? $s['prefix'] . '/' : '' );
 		$out   = array();
 		$token = '';
 		do {
-			$query = array( 'list-type' => '2', 'prefix' => $base );
+			$query = array( 'list-type' => '2' );
+			// SSM: the prefix is relative, SSM puts its own base in front of it.
+			if ( ! $ssm || '' !== $base ) {
+				$query['prefix'] = $base;
+			}
 			if ( '' !== $token ) {
 				$query['continuation-token'] = $token;
 			}
 			$res   = self::request( 'GET', '', $query, '', array(), 60 );
 			$token = '';
+			$strip = '';
+			if ( $ssm ) {
+				// The answer holds the complete keys, base included: they are compared and used without it.
+				if ( ! isset( $res['base'] ) || null === $res['base'] ) {
+					throw new WPMIG_Exception( 'Réponse inattendue du connecteur SSM (dossier de base absent).' );
+				}
+				$strip = $res['base'];
+			}
 			if ( preg_match_all( '#<Contents>(.*?)</Contents>#s', $res['body'], $items ) ) {
 				foreach ( $items[1] as $item ) {
 					if ( preg_match( '#<Key>(.*?)</Key>#s', $item, $k ) ) {
+						$key = html_entity_decode( $k[1], ENT_QUOTES, 'UTF-8' );
+						if ( '' !== $strip ) {
+							if ( 0 !== strpos( $key, $strip ) ) {
+								continue;
+							}
+							$key = substr( $key, strlen( $strip ) );
+						}
 						$out[] = array(
-							'key'      => html_entity_decode( $k[1], ENT_QUOTES, 'UTF-8' ),
+							'key'      => $key,
 							'size'     => preg_match( '#<Size>(\d+)</Size>#', $item, $z ) ? (int) $z[1] : 0,
 							'modified' => preg_match( '#<LastModified>([^<]*)</LastModified>#', $item, $d ) ? $d[1] : '',
 						);
@@ -503,7 +764,7 @@ class WPMIG_S3 {
 	 */
 	public static function start( $id ) {
 		if ( ! self::configured() ) {
-			throw new WPMIG_Exception( 'Le stockage S3 n\'est pas configuré (Réglages → Stockage S3).' );
+			throw new WPMIG_Exception( 'ssm' === self::source() ? self::MSG_NO_CONNECTOR : 'Le stockage S3 n\'est pas configuré (Réglages → Stockage S3).' );
 		}
 		$job = self::job();
 		if ( $job && 'running' === $job['status'] && time() - (int) $job['touched'] < self::STALE ) {
@@ -531,6 +792,7 @@ class WPMIG_S3 {
 		}
 		$job = array(
 			'package' => $package->data['id'],
+			'source'  => self::source(),
 			'status'  => 'running',
 			'started' => time(),
 			'files'   => $files,
@@ -584,6 +846,13 @@ class WPMIG_S3 {
 			return array( 'package' => '', 'status' => 'none', 'progress' => 0, 'sent' => 0, 'total' => 0, 'message' => '', 'error' => '' );
 		}
 		if ( 'running' !== $job['status'] ) {
+			return self::public_state( $job );
+		}
+		// The keys of a job depend on the source (own: with our folder, ssm: relative).
+		if ( ( isset( $job['source'] ) ? $job['source'] : 'own' ) !== self::source() ) {
+			$job['status'] = 'error';
+			$job['error']  = 'La source du stockage a changé pendant l\'envoi : abandonnez cet envoi puis relancez-le.';
+			self::save_job( $job );
 			return self::public_state( $job );
 		}
 		WPMIG_Plugin::raise_limits();
@@ -762,8 +1031,9 @@ class WPMIG_S3 {
 	private static function finish( array $job ) {
 		$history                    = self::history();
 		$history[ $job['package'] ] = array(
-			'time'  => time(),
-			'files' => array_map(
+			'time'   => time(),
+			'source' => isset( $job['source'] ) ? $job['source'] : 'own',
+			'files'  => array_map(
 				function ( $f ) {
 					return array( 'key' => $f['key'], 'size' => $f['size'] );
 				},
@@ -782,12 +1052,17 @@ class WPMIG_S3 {
 
 	/**
 	 * Keep the N most recent backups on S3, delete the older ones (only the ones
-	 * written by this plugin: folders named like a backup id).
+	 * written by this plugin: folders named like a backup id). Nothing is deleted when
+	 * the storage is provided by SSM.
 	 *
 	 * @return int Number of backups deleted.
 	 * @throws WPMIG_Exception On error.
 	 */
 	public static function prune() {
+		// With the storage provided by SSM, SSM decides what is kept: nothing is deleted from here.
+		if ( 'ssm' === self::source() ) {
+			return 0;
+		}
 		$s = self::settings();
 		if ( $s['keep'] < 1 ) {
 			return 0;
@@ -823,6 +1098,10 @@ class WPMIG_S3 {
 		$history = self::history();
 		if ( empty( $history[ $id ] ) ) {
 			throw new WPMIG_Exception( 'Cette sauvegarde n\'a pas été envoyée sur S3.' );
+		}
+		$where = isset( $history[ $id ]['source'] ) ? $history[ $id ]['source'] : 'own';
+		if ( self::source() !== $where ) {
+			throw new WPMIG_Exception( 'Cette sauvegarde a été envoyée avec ' . ( 'ssm' === $where ? 'le stockage fourni par SSM' : 'les réglages S3 de ce site' ) . ' : choisissez cette source (Réglages → Stockage S3) pour obtenir ses liens.' );
 		}
 		$out = array( 'installer' => '', 'archive' => '' );
 		foreach ( $history[ $id ]['files'] as $f ) {
