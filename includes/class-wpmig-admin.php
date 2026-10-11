@@ -1485,6 +1485,7 @@ class WPMIG_Admin {
 		try {
 			WPMIG_S3::save_settings(
 				array(
+					'source'     => isset( $_POST['source'] ) ? sanitize_key( wp_unslash( $_POST['source'] ) ) : null,
 					'endpoint'   => isset( $_POST['endpoint'] ) ? sanitize_text_field( wp_unslash( $_POST['endpoint'] ) ) : '',
 					'region'     => isset( $_POST['region'] ) ? sanitize_text_field( wp_unslash( $_POST['region'] ) ) : '',
 					'bucket'     => isset( $_POST['bucket'] ) ? sanitize_text_field( wp_unslash( $_POST['bucket'] ) ) : '',
@@ -1754,7 +1755,10 @@ class WPMIG_Admin {
 	 * S3 storage settings.
 	 */
 	private static function render_s3() {
-		$s = WPMIG_S3::settings();
+		$s      = WPMIG_S3::local_settings();
+		$source = WPMIG_S3::source();
+		$avail  = WPMIG_S3::ssm_available();
+		$auto   = WPMIG_S3::resolve_source( 'auto', $s );
 		// phpcs:disable WordPress.Security.NonceVerification -- display only.
 		?>
 		<div class="wpmig-card" id="wpmig-s3">
@@ -1764,11 +1768,29 @@ class WPMIG_Admin {
 			<?php elseif ( isset( $_GET['s3_error'] ) ) : ?>
 				<div class="notice notice-error inline"><p><?php echo esc_html( sanitize_text_field( wp_unslash( $_GET['s3_error'] ) ) ); ?></p></div>
 			<?php endif; ?>
+			<?php if ( 'ssm' === $source ) : ?>
+				<div class="notice notice-info inline wpmig-s3-ssm-banner"><p><strong>Stockage fourni par SSM</strong> : les clés restent dans SSM et ne sont jamais enregistrées sur ce site. Pour chaque requête, SSM remet une adresse signée valable pour cette seule requête.<?php echo $avail ? '' : ' <strong>Le connecteur SSM n\'est pas installé ou n\'est pas configuré : l\'envoi est impossible tant qu\'il ne l\'est pas.</strong>'; ?></p></div>
+			<?php elseif ( $avail ) : ?>
+				<div class="notice notice-info inline"><p>Les réglages S3 de ce site sont utilisés. Le connecteur SSM est installé : vous pouvez choisir le stockage fourni par SSM ci-dessous.</p></div>
+			<?php endif; ?>
 			<p>Envoyez vos sauvegardes sur un <strong>stockage compatible S3</strong> (Amazon S3, Infomaniak, Scaleway, OVHcloud, Wasabi, Backblaze B2, MinIO…) : elles survivent à une panne de ce serveur. L'envoi se fait par morceaux de 8 Mo, reprend après une coupure et vérifie l'empreinte de chaque fichier. Les clés d'accès ne sont <strong>jamais incluses dans les sauvegardes</strong>.</p>
 			<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" class="wpmig-s3-form">
 				<input type="hidden" name="action" value="wpmig_s3_save">
 				<?php wp_nonce_field( 'wpmig_s3_save' ); ?>
-				<table class="form-table" role="presentation"><tbody>
+				<table class="form-table" role="presentation">
+				<?php if ( $avail || 'ssm' === $s['source'] ) : ?>
+				<tbody>
+					<tr><th scope="row"><label for="wpmig-s3-source">Source du stockage</label></th><td>
+						<select id="wpmig-s3-source" name="source" data-auto="<?php echo esc_attr( $auto ); ?>">
+							<option value="auto" <?php selected( $s['source'], 'auto' ); ?>>Automatique (les réglages de ce site s'ils sont complets, sinon SSM)</option>
+							<option value="ssm" <?php selected( $s['source'], 'ssm' ); ?>>Stockage fourni par SSM (les clés restent dans SSM)</option>
+							<option value="own" <?php selected( $s['source'], 'own' ); ?>>Réglages S3 de ce site</option>
+						</select>
+						<p class="description">Source utilisée actuellement : <strong><?php echo 'ssm' === $source ? 'stockage fourni par SSM' : 'réglages S3 de ce site'; ?></strong>. Avec SSM, l'adresse, le bucket, le dossier et les clés ci-dessous sont inutilisés.</p>
+					</td></tr>
+				</tbody>
+				<?php endif; ?>
+				<tbody class="wpmig-s3-own" <?php echo 'ssm' === $source ? 'hidden' : ''; ?>>
 					<tr><th scope="row"><label for="wpmig-s3-endpoint">Adresse du service</label></th><td><input type="url" id="wpmig-s3-endpoint" name="endpoint" class="regular-text code" value="<?php echo esc_attr( $s['endpoint'] ); ?>" placeholder="https://s3.pub1.infomaniak.cloud" autocomplete="off"><p class="description">Sans chemin. Amazon S3 : <code>https://s3.eu-west-3.amazonaws.com</code>.</p></td></tr>
 					<tr><th scope="row"><label for="wpmig-s3-region">Région</label></th><td><input type="text" id="wpmig-s3-region" name="region" class="regular-text code" value="<?php echo esc_attr( $s['region'] ); ?>" placeholder="us-east-1" autocomplete="off"> <span class="description">celle indiquée par l'hébergeur (par exemple <code>eu-west-3</code>, <code>fr-par</code>, <code>us-east-1</code>).</span></td></tr>
 					<tr><th scope="row"><label for="wpmig-s3-bucket">Bucket</label></th><td><input type="text" id="wpmig-s3-bucket" name="bucket" class="regular-text code" value="<?php echo esc_attr( $s['bucket'] ); ?>" autocomplete="off"> dossier <input type="text" name="prefix" class="regular-text code" value="<?php echo esc_attr( $s['prefix'] ); ?>" aria-label="Dossier dans le bucket" autocomplete="off"></td></tr>
@@ -1776,8 +1798,13 @@ class WPMIG_Admin {
 					<tr><th scope="row"><label for="wpmig-s3-secret">Clé secrète</label></th><td><input type="password" id="wpmig-s3-secret" name="secret_key" class="regular-text code" value="" autocomplete="new-password" placeholder="<?php echo esc_attr( '' !== $s['secret_key'] ? '(inchangée)' : '' ); ?>" <?php echo defined( 'WPMIG_S3_SECRET_KEY' ) ? 'disabled' : ''; ?>>
 						<p class="description"><?php echo defined( 'WPMIG_S3_ACCESS_KEY' ) || defined( 'WPMIG_S3_SECRET_KEY' ) ? 'Une clé est définie dans wp-config.php (WPMIG_S3_ACCESS_KEY, WPMIG_S3_SECRET_KEY).' : 'Pour garder les clés hors de la base de données, définissez WPMIG_S3_ACCESS_KEY et WPMIG_S3_SECRET_KEY dans wp-config.php.'; ?> Créez de préférence une clé réservée à ce bucket.</p></td></tr>
 					<tr><th scope="row">Options</th><td>
-						<label><input type="checkbox" name="vhost" value="1" <?php checked( $s['vhost'] ); ?>> Le bucket est dans le nom d'hôte (<code>bucket.s3.exemple.fr</code>) au lieu du chemin</label><br>
+						<label><input type="checkbox" name="vhost" value="1" <?php checked( $s['vhost'] ); ?>> Le bucket est dans le nom d'hôte (<code>bucket.s3.exemple.fr</code>) au lieu du chemin</label>
+					</td></tr>
+				</tbody>
+				<tbody>
+					<tr><th scope="row">Conservation</th><td>
 						<label>Conserver les <input type="number" name="keep" min="0" max="1000" value="<?php echo esc_attr( $s['keep'] ); ?>" class="small-text"> dernières sauvegardes sur S3 (0 = toutes ; seuls les dossiers créés par WP Migration sont supprimés)</label>
+						<p class="description wpmig-s3-ssm-note" <?php echo 'ssm' === $source ? '' : 'hidden'; ?>><strong>Sans effet avec le stockage fourni par SSM</strong> : SSM fait autorité sur la durée de conservation, WP Migration ne supprime plus aucune sauvegarde sur le stockage.</p>
 					</td></tr>
 				</tbody></table>
 				<p><button type="submit" class="button button-primary">Enregistrer</button>

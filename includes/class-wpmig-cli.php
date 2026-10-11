@@ -938,7 +938,13 @@ class WPMIG_CLI {
 	 * The access keys can also be defined in wp-config.php (WPMIG_S3_ACCESS_KEY, WPMIG_S3_SECRET_KEY),
 	 * which keeps them out of the database.
 	 *
+	 * With --source=ssm the storage is provided by SSM (through the SSM Connector plugin): the keys
+	 * stay in SSM, every request is signed by SSM, and the options below are not used.
+	 *
 	 * ## OPTIONS
+	 *
+	 * [--source=<source>]
+	 * : Where the storage comes from: auto (default: the settings of this site if complete, else SSM when the SSM Connector is there), ssm (storage provided by SSM) or own (the settings below).
 	 *
 	 * [--endpoint=<url>]
 	 * : Service address, without path (https://s3.example.com).
@@ -973,10 +979,11 @@ class WPMIG_CLI {
 	 * @param array $assoc_args Options.
 	 */
 	public function s3( $args, $assoc_args ) {
-		$keys = array( 'endpoint', 'region', 'bucket', 'prefix', 'access-key', 'secret-key', 'vhost', 'keep' );
+		$keys = array( 'source', 'endpoint', 'region', 'bucket', 'prefix', 'access-key', 'secret-key', 'vhost', 'keep' );
 		if ( array_intersect_key( $assoc_args, array_flip( $keys ) ) ) {
-			$old = WPMIG_S3::settings();
-			$in  = array_merge( $old, array_intersect_key( $assoc_args, array_flip( array( 'endpoint', 'region', 'bucket', 'prefix', 'keep' ) ) ) );
+			// The settings as saved, not the effective ones (with SSM they are blank).
+			$old = WPMIG_S3::local_settings();
+			$in  = array_merge( $old, array_intersect_key( $assoc_args, array_flip( array( 'source', 'endpoint', 'region', 'bucket', 'prefix', 'keep' ) ) ) );
 			$in['access_key'] = isset( $assoc_args['access-key'] ) ? $assoc_args['access-key'] : $old['access_key'];
 			$in['secret_key'] = isset( $assoc_args['secret-key'] ) ? $assoc_args['secret-key'] : '';
 			$in['vhost']      = isset( $assoc_args['vhost'] ) ? true : $old['vhost'];
@@ -987,7 +994,15 @@ class WPMIG_CLI {
 			}
 			WP_CLI::success( 'Réglages enregistrés.' );
 		}
-		$s = WPMIG_S3::settings();
+		$s      = WPMIG_S3::local_settings();
+		$source = WPMIG_S3::source();
+		$names  = array( 'auto' => 'automatique', 'ssm' => 'stockage fourni par SSM', 'own' => 'réglages S3 de ce site' );
+		WP_CLI::log( 'Source     : ' . ( 'ssm' === $source ? 'stockage fourni par SSM (les clés restent dans SSM)' : 'réglages S3 de ce site' ) . ' [choix : ' . ( isset( $names[ $s['source'] ] ) ? $names[ $s['source'] ] : $s['source'] ) . ']' );
+		if ( 'ssm' === $source ) {
+			WP_CLI::log( 'Connecteur : ' . ( WPMIG_S3::ssm_available() ? 'installé et configuré' : 'ABSENT ou non configuré' ) );
+			WP_CLI::log( 'Conservées : géré par SSM (WP Migration ne supprime rien)' );
+			return;
+		}
 		WP_CLI::log( 'Service    : ' . ( '' !== $s['endpoint'] ? $s['endpoint'] : '—' ) . ( $s['vhost'] ? ' (bucket dans le nom d\'hôte)' : ' (bucket dans le chemin)' ) );
 		WP_CLI::log( 'Région     : ' . $s['region'] );
 		WP_CLI::log( 'Bucket     : ' . ( '' !== $s['bucket'] ? $s['bucket'] : '—' ) . ' / ' . $s['prefix'] );
@@ -1109,7 +1124,7 @@ class WPMIG_CLI {
 	}
 
 	/**
-	 * Delete the oldest backups on S3 (keeps the number set in wp migration s3 --keep).
+	 * Delete the oldest backups on S3 (keeps the number set in wp migration s3 --keep). Does nothing with the storage provided by SSM.
 	 *
 	 * @subcommand s3-prune
 	 * @param array $args       Arguments.
@@ -1120,6 +1135,10 @@ class WPMIG_CLI {
 			$n = WPMIG_S3::prune();
 		} catch ( WPMIG_Exception $e ) {
 			WP_CLI::error( $e->getMessage() );
+			return;
+		}
+		if ( 'ssm' === WPMIG_S3::source() ) {
+			WP_CLI::success( 'Stockage fourni par SSM : SSM fait autorité sur la conservation, rien n\'est supprimé depuis WP Migration.' );
 			return;
 		}
 		WP_CLI::success( $n . ' sauvegarde(s) supprimée(s) sur S3.' );
