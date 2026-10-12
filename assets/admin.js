@@ -1324,6 +1324,14 @@
 	/* S3 storage: connection test. */
 	var s3 = document.getElementById( 'wpmig-s3' );
 	if ( s3 ) {
+		var s3source = $( '#wpmig-s3-source' );
+		if ( s3source ) {
+			s3source.addEventListener( 'change', function () {
+				var effective = s3source.value === 'auto' ? s3source.getAttribute( 'data-auto' ) : s3source.value;
+				$( '.wpmig-s3-own', s3 ).hidden = effective === 'ssm';
+				$( '.wpmig-s3-ssm-note', s3 ).hidden = effective !== 'ssm';
+			} );
+		}
 		$( '#wpmig-s3-test' ).addEventListener( 'click', function () {
 			var button = this;
 			var panel = $( '#wpmig-s3-panel' );

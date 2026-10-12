@@ -658,5 +658,489 @@ foreach ( array(
 	}
 }
 
+echo "\nStockage fourni par SSM\n";
+// Doubles de WordPress : filtres, erreurs et transport HTTP simulé (aucun réseau).
+$GLOBALS['__filters']  = array();
+$GLOBALS['__http']     = array();
+$GLOBALS['__http_fn']  = null;
+$GLOBALS['__sign']     = array();
+if ( ! defined( 'WPMIG_VERSION' ) ) {
+	define( 'WPMIG_VERSION', '0.0.0-test' );
+}
+if ( ! function_exists( 'apply_filters' ) ) {
+	function apply_filters( $tag, $value ) {
+		if ( empty( $GLOBALS['__filters'][ $tag ] ) ) {
+			return $value;
+		}
+		$args = func_get_args();
+		array_shift( $args );
+		return call_user_func_array( $GLOBALS['__filters'][ $tag ], $args );
+	}
+}
+if ( ! class_exists( 'WP_Error' ) ) {
+	class WP_Error {
+		public $code;
+		public $message;
+		public function __construct( $code = '', $message = '' ) {
+			$this->code    = $code;
+			$this->message = $message;
+		}
+		public function get_error_message() {
+			return $this->message;
+		}
+	}
+}
+if ( ! function_exists( 'is_wp_error' ) ) {
+	function is_wp_error( $thing ) {
+		return $thing instanceof WP_Error;
+	}
+}
+if ( ! function_exists( 'wp_remote_request' ) ) {
+	function wp_remote_request( $url, $args = array() ) {
+		$GLOBALS['__http'][] = array( 'url' => $url, 'args' => $args );
+		return call_user_func( $GLOBALS['__http_fn'], $url, $args );
+	}
+	function wp_remote_retrieve_response_code( $res ) {
+		return $res['code'];
+	}
+	function wp_remote_retrieve_headers( $res ) {
+		return $res['headers'];
+	}
+	function wp_remote_retrieve_body( $res ) {
+		return $res['body'];
+	}
+}
+if ( ! function_exists( 'delete_option' ) ) {
+	function delete_option( $name ) {
+		unset( $GLOBALS['__s3_opts'][ $name ] );
+		return true;
+	}
+}
+require_once dirname( __DIR__ ) . '/includes/class-wpmig-package.php';
+require_once dirname( __DIR__ ) . '/includes/class-wpmig-plugin.php';
+
+$ssm_base = 'ssm/www.exemple.fr/wp-migration/';
+$secret   = 'SECRET-LOCAL-9f3a';
+$sigtoken = 'SIGNATURE-DE-TEST-77';
+
+// Connecteur simulé : il note chaque demande et rend une adresse de test pour cette seule requête.
+$connector = function ( $available, $answer = null ) use ( &$ssm_base, &$sigtoken ) {
+	$GLOBALS['__filters'] = array();
+	$GLOBALS['__sign']    = array();
+	if ( $available ) {
+		$GLOBALS['__filters']['ssm_connector_storage_available'] = function () {
+			return true;
+		};
+	}
+	if ( false !== $answer ) {
+		$GLOBALS['__filters']['ssm_connector_storage_sign'] = function ( $value, $args ) use ( &$ssm_base, &$sigtoken, $answer ) {
+			$GLOBALS['__sign'][] = $args;
+			if ( null !== $answer ) {
+				return $answer;
+			}
+			$query = $args['query'];
+			ksort( $query );
+			$url = 'https://stockage.ssm.test/bucket-ssm/' . $ssm_base . $args['key'] . '?' . http_build_query( $query ) . ( $query ? '&' : '' ) . 'X-Amz-Credential=ID-JETABLE&X-Amz-Signature=' . $sigtoken;
+			return array( 'url' => $url, 'method' => $args['method'], 'base' => $ssm_base, 'expires_in' => $args['expires'] );
+		};
+	}
+};
+// Stockage simulé derrière l'adresse signée : objets en mémoire, envoi par morceaux, liste.
+$store = array( 'objects' => array(), 'uploads' => array() );
+$fake_http = function ( $url, $args ) use ( &$store, &$ssm_base ) {
+	$parts = parse_url( $url );
+	parse_str( isset( $parts['query'] ) ? $parts['query'] : '', $q );
+	$path   = rawurldecode( $parts['path'] );
+	$method = $args['method'];
+	$ok     = function ( $body = '', $headers = array() ) {
+		return array( 'code' => 200, 'headers' => $headers, 'body' => $body );
+	};
+	if ( 0 === strpos( $path, '/bucket-ssm/' ) && isset( $q['list-type'] ) ) {
+		$prefix = isset( $q['prefix'] ) ? $q['prefix'] : '';
+		$xml    = '<ListBucketResult><IsTruncated>false</IsTruncated>';
+		foreach ( $store['objects'] as $k => $o ) {
+			if ( 0 === strpos( $k, $ssm_base . $prefix ) ) {
+				$xml .= '<Contents><Key>' . htmlspecialchars( $k ) . '</Key><LastModified>2026-10-08T10:00:00.000Z</LastModified><Size>' . strlen( $o ) . '</Size></Contents>';
+			}
+		}
+		return $ok( $xml . '</ListBucketResult>' );
+	}
+	$key = substr( $path, strlen( '/bucket-ssm/' ) );
+	if ( 'POST' === $method && isset( $q['uploads'] ) ) {
+		$store['uploads']['UP-1'] = array();
+		return $ok( '<InitiateMultipartUploadResult><UploadId>UP-1</UploadId></InitiateMultipartUploadResult>' );
+	}
+	if ( 'PUT' === $method && isset( $q['partNumber'] ) ) {
+		$store['uploads'][ $q['uploadId'] ][ (int) $q['partNumber'] ] = $args['body'];
+		return $ok( '', array( 'ETag' => '"' . md5( $args['body'] ) . '"' ) );
+	}
+	if ( 'POST' === $method && isset( $q['uploadId'] ) ) {
+		ksort( $store['uploads'][ $q['uploadId'] ] );
+		$bin = '';
+		$all = '';
+		foreach ( $store['uploads'][ $q['uploadId'] ] as $part ) {
+			$bin .= md5( $part, true );
+			$all .= $part;
+		}
+		$store['objects'][ $key ] = $all;
+		return $ok( '<CompleteMultipartUploadResult><ETag>"' . md5( $bin ) . '-' . count( $store['uploads'][ $q['uploadId'] ] ) . '"</ETag></CompleteMultipartUploadResult>' );
+	}
+	if ( 'PUT' === $method ) {
+		$store['objects'][ $key ] = $args['body'];
+		return $ok( '', array( 'ETag' => '"' . md5( $args['body'] ) . '"' ) );
+	}
+	if ( 'DELETE' === $method ) {
+		unset( $store['objects'][ $key ] );
+		return array( 'code' => 204, 'headers' => array(), 'body' => '' );
+	}
+	return $ok( isset( $store['objects'][ $key ] ) ? $store['objects'][ $key ] : '' );
+};
+$GLOBALS['__http_fn'] = $fake_http;
+$reset_http           = function () {
+	$GLOBALS['__http'] = array();
+	$GLOBALS['__sign'] = array();
+};
+$set_local            = function ( $source, $complete = true ) use ( $secret ) {
+	$GLOBALS['__s3_opts']['wpmig_s3'] = array(
+		'source'     => $source,
+		'endpoint'   => $complete ? 'https://s3.exemple.fr' : '',
+		'region'     => 'fr-par',
+		'bucket'     => $complete ? 'sauvegardes' : '',
+		'prefix'     => 'wp-migration',
+		'access_key' => $complete ? 'AKIALOCAL' : '',
+		'secret_key' => $complete ? $secret : '',
+		'vhost'      => false,
+		'keep'       => 1,
+	);
+};
+$message_of           = function ( $fn ) {
+	try {
+		$fn();
+	} catch ( WPMIG_Exception $e ) {
+		return $e->getMessage();
+	}
+	return null;
+};
+$ids = array( '20261001_100000_aaaaaaaaaaaa', '20261002_100000_bbbbbbbbbbbb', '20261003_100000_cccccccccccc' );
+
+// (f) Choix de la source.
+$set_local( 'auto', true );
+$connector( true );
+check( 'auto : réglages complets -> own (même avec le connecteur)', 'own', WPMIG_S3::source() );
+$set_local( 'auto', false );
+check( 'auto : réglages incomplets + connecteur -> ssm', 'ssm', WPMIG_S3::source() );
+check( 'auto : ssm configuré', true, WPMIG_S3::configured() );
+$connector( false, false );
+check( 'auto : réglages incomplets, sans connecteur -> own non configuré', array( 'own', false ), array( WPMIG_S3::source(), WPMIG_S3::configured() ) );
+$set_local( 'ssm', false );
+check( 'ssm explicite sans connecteur : non configuré', array( 'ssm', false ), array( WPMIG_S3::source(), WPMIG_S3::configured() ) );
+$set_local( 'own', false );
+$connector( true );
+check( 'own explicite, réglages incomplets : non configuré malgré le connecteur', array( 'own', false ), array( WPMIG_S3::source(), WPMIG_S3::configured() ) );
+$set_local( 'ssm', true );
+check( 'ssm explicite : l\'emporte sur des réglages complets', 'ssm', WPMIG_S3::source() );
+$s = WPMIG_S3::settings();
+check( 'ssm : dossier vide, aucune clé lue', array( '', '', '' ), array( $s['prefix'], $s['access_key'], $s['secret_key'] ) );
+check( 'ssm : les réglages enregistrés restent intacts', array( 'wp-migration', $secret ), array( WPMIG_S3::local_settings()['prefix'], WPMIG_S3::local_settings()['secret_key'] ) );
+$set_local( 'own', true );
+$s = WPMIG_S3::settings();
+check( 'own : dossier et clés comme avant', array( 'wp-migration', $secret ), array( $s['prefix'], $s['secret_key'] ) );
+$GLOBALS['__s3_opts']['wpmig_s3'] = array( 'endpoint' => 'https://s3.exemple.fr', 'bucket' => 'bucket', 'access_key' => 'A', 'secret_key' => 'S' );
+check( 'anciens réglages (sans source) : auto, own', array( 'auto', 'own' ), array( WPMIG_S3::settings()['source'], WPMIG_S3::source() ) );
+$connector( false, false );
+check( 'choisir ssm sans connecteur refusé', true, null !== $message_of( function () {
+	WPMIG_S3::save_settings( array( 'source' => 'ssm' ) );
+} ) );
+check( 'source inconnue refusée', true, null !== $message_of( function () {
+	WPMIG_S3::save_settings( array( 'source' => 'autre' ) );
+} ) );
+$connector( true );
+$saved = WPMIG_S3::save_settings( array( 'source' => 'ssm', 'endpoint' => 'https://s3.exemple.fr', 'bucket' => 'bucket', 'access_key' => 'A', 'secret_key' => '' ) );
+check( 'choisir ssm avec le connecteur : enregistré, clés locales conservées', array( 'ssm', 'S' ), array( WPMIG_S3::source(), WPMIG_S3::local_settings()['secret_key'] ) );
+$saved = WPMIG_S3::save_settings( array( 'endpoint' => 'https://s3.exemple.fr', 'bucket' => 'bucket', 'access_key' => 'A' ) );
+check( 'source absente de la saisie : inchangée', 'ssm', WPMIG_S3::local_settings()['source'] );
+$connector( false, false );
+WPMIG_S3::save_settings( array( 'endpoint' => 'https://s3.exemple.fr', 'bucket' => 'bucket', 'access_key' => 'A' ) );
+check( 'ssm déjà choisi, connecteur retiré : les autres réglages restent modifiables', 'ssm', WPMIG_S3::local_settings()['source'] );
+
+// (a) Aucune clé lue ni envoyée en mode ssm + (b) envoi par morceaux complet.
+$set_local( 'ssm', true );
+$connector( true );
+$store = array( 'objects' => array(), 'uploads' => array() );
+$reset_http();
+$GLOBALS['__filters']['wpmig_s3_part_size'] = function () {
+	return 5242880;
+};
+$tmpdir = sys_get_temp_dir() . '/wpmig-ssm-' . getmypid();
+@mkdir( $tmpdir );
+$big = $tmpdir . '/site_' . $ids[2] . '_archive.wpmig';
+$fh  = fopen( $big, 'wb' );
+for ( $i = 0; $i < 8; $i++ ) {
+	fwrite( $fh, str_repeat( chr( 65 + $i ), 1048576 ) );
+}
+fwrite( $fh, 'fin-de-fichier' );
+fclose( $fh );
+$small = $tmpdir . '/site_' . $ids[2] . '_installer.php';
+file_put_contents( $small, '<?php // installeur de test' );
+$rel_small = $ids[2] . '/' . basename( $small );
+$rel_big   = $ids[2] . '/' . basename( $big );
+$files     = array();
+foreach ( array( array( $small, $rel_small ), array( $big, $rel_big ) ) as $f ) {
+	$files[] = array( 'path' => $f[0], 'key' => $f[1], 'size' => filesize( $f[0] ), 'sent' => 0, 'done' => false, 'upload' => '', 'parts' => array() );
+}
+update_option( WPMIG_S3::STATE, array( 'package' => $ids[2], 'source' => 'ssm', 'status' => 'running', 'started' => time(), 'files' => $files, 'error' => '', 'retries' => 0, 'touched' => time() ) );
+$state = WPMIG_S3::run();
+check( 'ssm : envoi terminé', 'done', $state['status'] );
+check( 'ssm : petit fichier envoyé tel quel', '<?php // installeur de test', isset( $store['objects'][ $ssm_base . $rel_small ] ) ? $store['objects'][ $ssm_base . $rel_small ] : null );
+check( 'ssm : archive reconstituée à l\'octet près sous la base de SSM', true, isset( $store['objects'][ $ssm_base . $rel_big ] ) && file_get_contents( $big ) === $store['objects'][ $ssm_base . $rel_big ] );
+$kinds = array();
+foreach ( $GLOBALS['__sign'] as $call ) {
+	$kinds[] = $call['method'] . ' ' . ( '' === $call['key'] ? '(bucket)' : $call['key'] ) . ' ' . http_build_query( $call['query'] );
+}
+check(
+	'ssm : demandes de signature (create -> parts -> complete)',
+	array(
+		'PUT ' . $rel_small . ' ',
+		'POST ' . $rel_big . ' uploads=',
+		'PUT ' . $rel_big . ' partNumber=1&uploadId=UP-1',
+		'PUT ' . $rel_big . ' partNumber=2&uploadId=UP-1',
+		'POST ' . $rel_big . ' uploadId=UP-1',
+	),
+	$kinds
+);
+$complete = null;
+foreach ( $GLOBALS['__http'] as $h ) {
+	if ( 'POST' === $h['args']['method'] && false !== strpos( $h['url'], 'uploadId=UP-1' ) ) {
+		$complete = $h['args']['body'];
+	}
+}
+check(
+	'ssm : corps CompleteMultipartUpload avec les empreintes des morceaux',
+	'<CompleteMultipartUpload><Part><PartNumber>1</PartNumber><ETag>"' . md5( substr( file_get_contents( $big ), 0, 5242880 ) ) . '"</ETag></Part><Part><PartNumber>2</PartNumber><ETag>"' . md5( substr( file_get_contents( $big ), 5242880 ) ) . '"</ETag></Part></CompleteMultipartUpload>',
+	$complete
+);
+$expires = array();
+foreach ( $GLOBALS['__sign'] as $call ) {
+	$expires[] = $call['expires'];
+}
+check( 'ssm : une signature fraîche par requête (5 demandes pour 5 requêtes)', array( count( $GLOBALS['__http'] ), 5 ), array( count( $GLOBALS['__sign'] ), count( $GLOBALS['__http'] ) ) );
+check( 'ssm : durée demandée dans les limites (3600 s, 6 h au plus)', true, max( $expires ) <= 21600 && min( $expires ) >= 1 );
+$bad = array();
+foreach ( $GLOBALS['__http'] as $h ) {
+	foreach ( $h['args']['headers'] as $name => $value ) {
+		$lname = strtolower( $name );
+		if ( 'authorization' === $lname || 0 === strpos( $lname, 'x-amz-' ) || 'host' === $lname ) {
+			$bad[] = $name;
+		}
+	}
+	if ( 0 !== $h['args']['redirection'] || false === strpos( $h['url'], 'X-Amz-Signature=' . $sigtoken ) ) {
+		$bad[] = 'redirection/url';
+	}
+}
+check( 'ssm : ni Authorization, ni x-amz-*, ni host ; adresse signée telle quelle ; pas de redirection', array(), $bad );
+check( 'ssm : la clé secrète locale n\'apparaît dans aucune requête ni demande', false, false !== strpos( serialize( array( $GLOBALS['__http'], $GLOBALS['__sign'] ) ), $secret ) || false !== strpos( serialize( array( $GLOBALS['__http'], $GLOBALS['__sign'] ) ), 'AKIALOCAL' ) );
+$parts_headers = array();
+foreach ( $GLOBALS['__http'] as $h ) {
+	if ( 'PUT' === $h['args']['method'] ) {
+		$parts_headers[] = isset( $h['args']['headers']['Content-MD5'] ) && isset( $h['args']['headers']['Content-Type'] );
+	}
+}
+check( 'ssm : Content-MD5 et Content-Type envoyés (non signés)', array( true, true, true ), $parts_headers );
+$hist = WPMIG_S3::history();
+check( 'ssm : historique avec la source et les clés relatives', array( 'ssm', $rel_small ), array( $hist[ $ids[2] ]['source'], $hist[ $ids[2] ]['files'][0]['key'] ) );
+check( 'ssm : aucun dossier propre dans les clés', 0, preg_match( '#wp-migration/#', $rel_big ) );
+
+// Liens de téléchargement.
+$reset_http();
+$links = WPMIG_S3::links( $ids[2], 24 );
+check( 'ssm : liens signés par SSM', true, 0 === strpos( $links['archive'], 'https://stockage.ssm.test/' ) && false !== strpos( $links['installer'], 'X-Amz-Signature=' . $sigtoken ) );
+check( 'ssm : lien GET, durée demandée 24 h', array( 'GET', 86400, array() ), array( $GLOBALS['__sign'][0]['method'], $GLOBALS['__sign'][0]['expires'], $GLOBALS['__sign'][0]['query'] ) );
+check( 'ssm : un lien de 7 jours est accepté, au-delà il est ramené à 7 jours', array( 604800, 604800 ), array( ( WPMIG_S3::presign( 'a/b.txt', 604800 ) ? $GLOBALS['__sign'][ count( $GLOBALS['__sign'] ) - 1 ]['expires'] : 0 ), ( WPMIG_S3::presign( 'a/b.txt', 9999999 ) ? $GLOBALS['__sign'][ count( $GLOBALS['__sign'] ) - 1 ]['expires'] : 0 ) ) );
+WPMIG_S3::delete_object( $rel_small );
+check( 'ssm : suppression demandée à SSM (DELETE, 6 h au plus)', array( 'DELETE', true ), array( $GLOBALS['__sign'][ count( $GLOBALS['__sign'] ) - 1 ]['method'], $GLOBALS['__sign'][ count( $GLOBALS['__sign'] ) - 1 ]['expires'] <= 21600 ) );
+$set_local( 'own', true );
+check( 'liens d\'une sauvegarde envoyée via SSM refusés dans l\'autre source', true, false !== strpos( (string) $message_of( function () use ( $ids ) {
+	WPMIG_S3::links( $ids[2] );
+} ), 'SSM' ) );
+$set_local( 'ssm', true );
+
+// Une source qui change pendant un envoi.
+update_option( WPMIG_S3::STATE, array( 'package' => $ids[2], 'source' => 'own', 'status' => 'running', 'started' => time(), 'files' => $files, 'error' => '', 'retries' => 0, 'touched' => time() ) );
+$reset_http();
+$state = WPMIG_S3::step( 3 );
+check( 'envoi commencé avec l\'autre source : arrêté sans aucune requête', array( 'error', 0 ), array( $state['status'], count( $GLOBALS['__http'] ) ) );
+update_option( WPMIG_S3::STATE, null );
+WPMIG_S3::cancel();
+
+// (c) Liste : préfixe relatif, base retirée.
+$store['objects'] = array();
+foreach ( $ids as $n => $id ) {
+	$store['objects'][ $ssm_base . $id . '/site_' . $id . '_archive.wpmig' ] = str_repeat( 'x', 10 + $n );
+	$store['objects'][ $ssm_base . $id . '/site_' . $id . '_installer.php' ] = 'y';
+}
+$store['objects']['ssm/autre-site/wp-migration/' . $ids[0] . '/intrus.wpmig'] = 'z';
+$reset_http();
+$list = WPMIG_S3::list_objects();
+$keys = array();
+foreach ( $list as $o ) {
+	$keys[] = $o['key'];
+}
+check( 'ssm : liste sans base, taille conservée', array( $ids[0] . '/site_' . $ids[0] . '_archive.wpmig', 10 ), array( $keys[0], $list[0]['size'] ) );
+check( 'ssm : six fichiers, aucune clé ne commence par la base', array( 6, 0 ), array( count( $keys ), count( preg_grep( '#^ssm/#', $keys ) ) ) );
+check( 'ssm : liste du bucket sans clé, sans préfixe à envoyer', array( 'GET', '', array( 'list-type' => '2' ) ), array( $GLOBALS['__sign'][0]['method'], $GLOBALS['__sign'][0]['key'], $GLOBALS['__sign'][0]['query'] ) );
+$reset_http();
+$list = WPMIG_S3::list_objects( $ids[1] . '/' );
+check( 'ssm : préfixe relatif envoyé à SSM (sans la base)', array( 'list-type' => '2', 'prefix' => $ids[1] . '/' ), $GLOBALS['__sign'][0]['query'] );
+check( 'ssm : liste filtrée par le préfixe', array( $ids[1] . '/site_' . $ids[1] . '_archive.wpmig', $ids[1] . '/site_' . $ids[1] . '_installer.php' ), array( $list[0]['key'], $list[1]['key'] ) );
+
+// Test de connexion.
+$reset_http();
+$lines = WPMIG_S3::test();
+check( 'ssm : test de connexion par une liste, sans écriture', array( 1, 'GET' ), array( count( $GLOBALS['__http'] ), $GLOBALS['__http'][0]['args']['method'] ) );
+check( 'ssm : test de connexion annonce SSM et le dossier', true, false !== strpos( $lines[0], 'SSM' ) && false !== strpos( $lines[1], $ssm_base ) );
+
+// (g) La rétention locale ne supprime rien avec SSM.
+$set_local( 'ssm', true );
+$count_before = count( $store['objects'] );
+$reset_http();
+check( 'ssm : prune() ne supprime rien', array( 0, 0, $count_before ), array( WPMIG_S3::prune(), count( $GLOBALS['__http'] ), count( $store['objects'] ) ) );
+// Rétention bien active en mode own (garde-fou du test précédent).
+$set_local( 'own', true );
+$connector( false, false );
+$own_store = array();
+foreach ( $ids as $id ) {
+	$own_store[ 'wp-migration/' . $id . '/site_' . $id . '_archive.wpmig' ] = 'x';
+}
+$own_deleted         = array();
+$GLOBALS['__http_fn'] = function ( $url, $args ) use ( &$own_store, &$own_deleted ) {
+	if ( 'DELETE' === $args['method'] ) {
+		$own_deleted[] = rawurldecode( parse_url( $url, PHP_URL_PATH ) );
+		return array( 'code' => 204, 'headers' => array(), 'body' => '' );
+	}
+	$xml = '<ListBucketResult><IsTruncated>false</IsTruncated>';
+	foreach ( $own_store as $k => $v ) {
+		$xml .= '<Contents><Key>' . $k . '</Key><Size>1</Size></Contents>';
+	}
+	return array( 'code' => 200, 'headers' => array(), 'body' => $xml . '</ListBucketResult>' );
+};
+$reset_http();
+check( 'own : prune() garde le plus récent et supprime les autres', array( 2, array( '/sauvegardes/wp-migration/' . $ids[1] . '/site_' . $ids[1] . '_archive.wpmig', '/sauvegardes/wp-migration/' . $ids[0] . '/site_' . $ids[0] . '_archive.wpmig' ) ), array( WPMIG_S3::prune(), $own_deleted ) );
+
+// (e) Le mode own signe toujours lui-même et n'appelle jamais SSM.
+$connector( true );
+$GLOBALS['__http_fn'] = $fake_http;
+$store['objects']     = array();
+$reset_http();
+WPMIG_S3::delete_object( 'wp-migration/x.txt' );
+$h = $GLOBALS['__http'][0];
+check( 'own : requête signée avec Authorization, hôte du bucket', array( true, 'https://s3.exemple.fr/sauvegardes/wp-migration/x.txt', 0 ), array( 0 === strpos( $h['args']['headers']['Authorization'], 'AWS4-HMAC-SHA256 Credential=AKIALOCAL/' ), $h['url'], count( $GLOBALS['__sign'] ) ) );
+check( 'own : x-amz-content-sha256 et x-amz-date toujours envoyés', true, isset( $h['args']['headers']['x-amz-content-sha256'] ) && isset( $h['args']['headers']['x-amz-date'] ) );
+check( 'own : lien pré-signé avec la clé locale', true, 0 === strpos( WPMIG_S3::presign( 'wp-migration/x.txt', 3600 ), 'https://s3.exemple.fr/sauvegardes/wp-migration/x.txt?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIALOCAL%2F' ) && 0 === count( $GLOBALS['__sign'] ) );
+$set_local( 'own', false );
+check( 'own : sans le connecteur, les erreurs d\'avant', 'Le stockage S3 n\'est pas configuré.', $message_of( function () {
+	WPMIG_S3::delete_object( 'x' );
+} ) );
+
+// (d) Erreurs : message clair, jamais d'adresse signée.
+$set_local( 'ssm', true );
+$GLOBALS['__http_fn'] = $fake_http;
+$connector( true, new WP_Error( 'ssm_no_target', 'SSM : aucun point de sauvegarde n\'est configuré pour ce site.' ) );
+$reset_http();
+$msg = $message_of( function () {
+	WPMIG_S3::test();
+} );
+check( 'erreur de SSM : message repris tel quel', 'SSM : aucun point de sauvegarde n\'est configuré pour ce site.', $msg );
+check( 'erreur de SSM : aucune requête vers le stockage', 0, count( $GLOBALS['__http'] ) );
+$connector( true, new WP_Error( 'ssm_down', 'SSM est injoignable (délai dépassé) : https://ssm.exemple.fr/api/sign?token=JETON-SECRET-12 refusé.' ) );
+$msg = $message_of( function () {
+	WPMIG_S3::list_objects();
+} );
+check( 'erreur de SSM : une adresse dans le message est amputée de sa query', array( true, false ), array( false !== strpos( (string) $msg, 'SSM est injoignable' ), false !== strpos( (string) $msg, 'JETON-SECRET-12' ) ) );
+$connector( true, null );
+$GLOBALS['__filters']['ssm_connector_storage_sign'] = function ( $value ) {
+	return $value; // Filtre non accroché : la valeur passée revient (null).
+};
+check( 'connecteur absent (null) : message explicite', true, false !== strpos( (string) $message_of( function () {
+	WPMIG_S3::test();
+} ), 'connecteur SSM' ) );
+$connector( false, false );
+$msg = $message_of( function () {
+	WPMIG_S3::test();
+} );
+check( 'connecteur non disponible : message explicite, sans aucune requête', array( true, 0 ), array( false !== strpos( (string) $msg, 'connecteur SSM' ), count( $GLOBALS['__http'] ) ) );
+$connector( true, array( 'method' => 'GET' ) );
+check( 'réponse du connecteur sans adresse : erreur claire', true, false !== strpos( (string) $message_of( function () {
+	WPMIG_S3::test();
+} ), 'Réponse inattendue du connecteur SSM' ) );
+$connector( true, array( 'url' => 'https://stockage.ssm.test/b/x?X-Amz-Signature=' . $sigtoken, 'method' => 'PUT', 'base' => $ssm_base ) );
+check( 'réponse du connecteur pour une autre méthode refusée', true, false !== strpos( (string) $message_of( function () {
+	WPMIG_S3::test();
+} ), 'autre méthode' ) );
+// Le transport échoue : l'adresse signée ne sort pas.
+$connector( true );
+$GLOBALS['__http_fn'] = function ( $url, $args ) {
+	return new WP_Error( 'http_request_failed', 'cURL error 28: Operation timed out sur ' . $url );
+};
+$msg = $message_of( function () {
+	WPMIG_S3::test();
+} );
+check( 'échec réseau : message sans signature ni identifiant', array( true, false, false ), array( false !== strpos( (string) $msg, 'injoignable' ), false !== strpos( (string) $msg, $sigtoken ), false !== strpos( (string) $msg, 'ID-JETABLE' ) ) );
+// Le stockage refuse (403) : conseil propre à SSM, pas de clés locales.
+$GLOBALS['__http_fn'] = function ( $url, $args ) {
+	return array( 'code' => 403, 'headers' => array(), 'body' => '<Error><Code>AccessDenied</Code><Message>Request has expired</Message></Error>' );
+};
+$msg = $message_of( function () {
+	WPMIG_S3::test();
+} );
+check( 'refus du stockage : code, message du stockage, conseil SSM', true, false !== strpos( (string) $msg, 'AccessDenied — Request has expired' ) && false === strpos( (string) $msg, $sigtoken ) && false === strpos( (string) $msg, 'clé secrète' ) );
+$GLOBALS['__http_fn'] = function ( $url, $args ) {
+	return array( 'code' => 403, 'headers' => array(), 'body' => '' );
+};
+$msg = $message_of( function () {
+	WPMIG_S3::delete_object( 'a/b.txt' );
+} );
+check( 'refus sans détail : conseil propre à SSM', true, false !== strpos( (string) $msg, 'Stockage fourni par SSM (HTTP 403)' ) && false !== strpos( (string) $msg, 'signée par SSM' ) && false === strpos( (string) $msg, 'clé secrète' ) );
+
+// Clés relatives : les règles du protocole.
+$GLOBALS['__http_fn'] = $fake_http;
+$connector( true );
+$reset_http();
+foreach ( array(
+	'chemin absolu'         => '/a/b.txt',
+	'point-point'           => 'a/../b.txt',
+	'double barre'          => 'a//b.txt',
+	'caractère interdit'    => 'a/é.txt',
+	'espace'                => 'a/b c.txt',
+	'trop longue'           => str_repeat( 'a', 401 ),
+) as $name => $bad_key ) {
+	check( 'clé refusée : ' . $name, array( true, 0 ), array( null !== $message_of( function () use ( $bad_key ) {
+		WPMIG_S3::delete_object( $bad_key );
+	} ), count( $GLOBALS['__sign'] ) ) );
+}
+$reset_http();
+WPMIG_S3::delete_object( str_repeat( 'a', 400 ) );
+WPMIG_S3::delete_object( 'Site-2026_x.y/' . $ids[0] . '/site_' . $ids[0] . '_archive.wpmig' );
+check( 'clés valides acceptées (400 caractères, identifiant de sauvegarde, tirets, points)', 2, count( $GLOBALS['__sign'] ) );
+$name_ok = true;
+foreach ( array( 'mon-site', 'site_2026.v2', 'a-b' ) as $slug ) {
+	$name_ok = $name_ok && 1 === preg_match( '#^[A-Za-z0-9._\-][A-Za-z0-9._\-/]*$#', $slug . '_' . $ids[0] . '_archive.wpmig' );
+}
+check( 'noms de sauvegarde de WP Migration conformes au protocole', true, $name_ok );
+
+// Si une constante porte une clé secrète, le mode ssm ne la lit pas non plus (à garder en dernier : une constante ne se retire pas).
+if ( ! defined( 'WPMIG_S3_SECRET_KEY' ) ) {
+	define( 'WPMIG_S3_SECRET_KEY', 'SECRET-CONSTANTE-wp-config' );
+	define( 'WPMIG_S3_ACCESS_KEY', 'AKIACONSTANTE' );
+	$set_local( 'ssm', false );
+	$connector( true );
+	$reset_http();
+	WPMIG_S3::delete_object( 'a/b.txt' );
+	check( 'ssm : clés de wp-config.php ni lues ni envoyées', array( '', '', false ), array( WPMIG_S3::settings()['secret_key'], WPMIG_S3::settings()['access_key'], false !== strpos( serialize( array( $GLOBALS['__http'], $GLOBALS['__sign'] ) ), 'CONSTANTE' ) ) );
+	$set_local( 'own', false );
+	check( 'own : la constante de wp-config.php reste lue comme avant', 'SECRET-CONSTANTE-wp-config', WPMIG_S3::settings()['secret_key'] );
+}
+array_map( 'unlink', glob( $tmpdir . '/*' ) );
+@rmdir( $tmpdir );
+
 echo "\n" . ( $count - $failures ) . '/' . $count . " tests réussis\n";
 exit( $failures ? 1 : 0 );

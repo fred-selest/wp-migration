@@ -3,6 +3,20 @@
 Toutes les évolutions notables de WP Migration sont consignées ici.
 Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le projet respecte le [versionnage sémantique](https://semver.org/lang/fr/).
 
+## [1.17.0] - 2026-10-11
+
+### Ajouté
+- **Stockage fourni par SSM** (Réglages → Stockage S3) : avec l'extension SSM Connector, WP Migration peut utiliser un stockage dont la **clé secrète reste dans SSM** et ne descend jamais sur le site. Pour chaque requête S3 (envoi, morceau, liste, suppression, lien de téléchargement), SSM remet, par le connecteur, une **adresse pré-signée valable pour cette seule requête**, et WP Migration envoie lui-même la requête à cette adresse (aucun en-tête `Authorization` ni `x-amz-*`). Un site compromis ne peut ainsi toucher qu'à son propre dossier.
+  - **Source du stockage** : « Automatique » (par défaut : les réglages S3 de ce site s'ils sont complets, sinon SSM si le connecteur est installé et configuré), « Stockage fourni par SSM » ou « Réglages S3 de ce site ». Sans le connecteur, rien ne change : le choix SSM n'est pas proposé et « Automatique » retombe sur les réglages du site.
+  - Avec SSM, les clés sont **relatives** (`<identifiant de la sauvegarde>/<fichier>`) : le dossier des réglages est ignoré, SSM ajoute le sien. L'adresse du service, le bucket, le dossier et les clés (y compris `WPMIG_S3_ACCESS_KEY` et `WPMIG_S3_SECRET_KEY`) ne sont ni lus ni utilisés.
+  - Les sauvegardes planifiées, « Envoyer vers S3 », les reprises, « Liens S3 », « Tester la connexion » (par une liste) et `wp migration s3-*` fonctionnent comme avant. Les adresses signées n'apparaissent dans aucun message d'erreur ; les erreurs de SSM (aucun point de sauvegarde pour ce site, SSM injoignable, connecteur absent) sont affichées telles quelles.
+  - Un envoi commencé avec une autre source est arrêté (abandonnez-le puis relancez-le), et les « Liens S3 » d'une sauvegarde ne se créent qu'avec la source qui a servi à l'envoyer.
+- `wp migration s3 --source=auto|ssm|own` ; `wp migration s3` affiche la source.
+- Tests unitaires du mode SSM avec un faux connecteur et un transport HTTP simulé (aucune clé ni en-tête de signature, envoi par morceaux, liste sans la base de SSM, erreurs sans adresse signée, choix automatique de la source, mode « réglages du site » inchangé).
+
+### Modifié
+- **Conservation des N dernières sauvegardes** (`wp migration s3-prune`, fin d'envoi) : avec le stockage fourni par SSM, WP Migration **ne supprime plus rien** ; SSM fait autorité sur la durée de conservation. Sans changement avec les réglages du site.
+
 ## [1.16.1] - 2026-10-08
 
 ### Corrigé
